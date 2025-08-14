@@ -5,8 +5,8 @@ This userscript animates emojis on any website using the [Noto Animated Emoji](h
 ## Installation
 
 1.  Install a userscript manager in your browser, such as:
-    *   [Violentmonkey](https://violentmonkey.github.io/)
-    *   [Tampermonkey](https://www.tampermonkey.net/)
+    -   [Violentmonkey](https://violentmonkey.github.io/)
+    -   [Tampermonkey](https://www.tampermonkey.net/)
 2.  [Click here to install the userscript](https://github.com/quarrel/animate-web-emoji/raw/main/animated-emoji-q.user.js).
 
 ## How it works
@@ -16,16 +16,6 @@ The userscript uses a `MutationObserver` to watch for changes in the DOM. When n
 The emoji data is fetched from the [Noto Emoji Animation data source](https://googlefonts.github.io/noto-emoji-animation/data/api.json) and cached locally for 14 days to improve performance.
 
 **Performance Enhancements:**
-*   **Lazy Loading and Pausing:** Animations are lazy-loaded only when they become visible in the viewport. They are automatically paused when scrolled off-screen and resumed when they come back into view, significantly reducing CPU and GPU usage.
-*   **Resource Management:** When animated emoji elements are removed from the DOM, their associated Lottie players are properly destroyed and removed from memory, preventing leaks on dynamic pages.
 
-## Development
-
-To update the version of the script, a pre-commit hook is included. This hook will automatically update the version number in the userscript file before each commit.
-
-**Configuration Files:**
-*   `.prettierrc.json`: This file defines the code formatting rules for the project. It should be committed to Git to ensure consistent code style across all contributors.
-*   `jsconfig.json`: This file provides configuration for JavaScript projects, enhancing editor features like IntelliSense. It should also be committed to Git for a consistent development experience.
-
-**Debugging:**
-*   The script includes a `DEBUG_MODE` constant. You can toggle this constant at the top of `animated-emoji-q.user.js` to `true` or `false` to enable or disable console debugging output.
+-   **Lazy Loading and Pausing:** Animations are lazy-loaded only when they become visible in the viewport. They are automatically paused when scrolled off-screen and resumed when they come back into view, significantly reducing CPU and GPU usage.
+-   **Resource Management:** When animated emoji elements are removed from the DOM, their associated Lottie players are properly destroyed and removed from memory, preventing leaks on dynamic pages.
