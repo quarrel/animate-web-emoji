@@ -7,7 +7,7 @@ This userscript animates emojis on any website using the [Noto Animated Emoji](h
 1.  Install a userscript manager in your browser, such as:
     -   [Violentmonkey](https://violentmonkey.github.io/)
     -   [Tampermonkey](https://www.tampermonkey.net/)
-2.  [Click here to install the userscript](https://github.com/quarrel/animate-web-emoji/raw/main/animated-emoji-q.user.js).
+2.  [Visit this script on Greasyfork to install safely](https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q).
 
 ## Key Features
 

@@ -1,20 +1,20 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-16_22-34
+// @version      2025-08-16_22-54
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
 // @match        *://*/*
 // @run-at       document-start
 // @noframes
-// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@v0.50.0/build/dotlottie-web-iife.js
+// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@7594952f537e155b66c2c4ae59dcb0bda0635f52/build/dotlottie-web-iife.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_addStyle
 // @license      MIT
-// @downloadURL  https://greasyfork.org/en/scripts/945524-animate-web-emoji-q
+// @downloadURL  https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q
 // ==/UserScript==
 
 'use strict';
