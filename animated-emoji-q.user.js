@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-15_00-29
+// @version      2025-08-16_22-29
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
 // @match        *://*/*
 // @run-at       document-start
 // @noframes
+// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@v0.50.0/build/dotlottie-web-iife.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -18,23 +19,13 @@
 
 'use strict';
 
-const DEBUG_MODE = true;
+const DEBUG_MODE = false;
 
 (async () => {
     const scriptStartTime = Date.now();
 
-    let DotLottieWorker, DotLottie;
-    try {
-        ({ DotLottie, DotLottieWorker } = await import(
-            'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.0/+esm'
-        ));
-    } catch (e) {
-        if (DEBUG_MODE) {
-            console.warn('dotlottie import failed; keeping text emojis', e);
-        }
-        return;
-    }
-
+    const WASMPLAYERURL =
+        'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.0/dist/dotlottie-player.wasm';
     const EMOJI_DATA_URL =
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json';
     const LOTTIE_URL_PATTERN =
@@ -45,7 +36,12 @@ const DEBUG_MODE = true;
     const CACHE_EXPIRATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
     const DEBOUNCE_DELAY_MS = 10;
     const DEBOUNCE_THRESHOLD = 25;
+    const DEBOUNCE_SAVE_DELAY_MS = 5000;
     const emojiRegex = /\p{RGI_Emoji}/gv;
+
+    let requestQueue = [];
+    let activeRequests = 0;
+    const MAX_CONCURRENT_REQUESTS = 8;
 
     let lottieCache = {};
     let cachedLottie = {};
@@ -53,21 +49,113 @@ const DEBUG_MODE = true;
     let emojiNameMap = {};
     const emojiToCodepoint = new Map();
 
+    function base64ToBytes(base64) {
+        const binString = atob(base64);
+        return Uint8Array.from(binString, (char) => char.charCodeAt(0));
+    }
+
+    function arrayBufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    const loadWasm = (url) => {
+        return new Promise(async (resolve, reject) => {
+            const CACHE_KEY = `wasm_cache_${url}`;
+            const CACHE_TTL = 24 * 60 * 60 * 1000; // 1 day
+            const NOW = Date.now();
+
+            const cached = await GM_getValue(CACHE_KEY, null);
+
+            if (cached && cached.code && cached.timestamp > NOW - CACHE_TTL) {
+                if (DEBUG_MODE) {
+                    console.log('Loading WASM from cache:', url);
+                }
+                try {
+                    const bytes = base64ToBytes(cached.code);
+                    return resolve(bytes.buffer); // resolve as ArrayBuffer
+                } catch (e) {
+                    console.warn('Cache decode failed, re-fetching:', e);
+                }
+            }
+
+            // Cache miss — fetch fresh
+            if (DEBUG_MODE) {
+                console.log('Fetching WASM:', url);
+            }
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                responseType: 'arraybuffer',
+                onload: async (res) => {
+                    if (res.status !== 200 || !res.response) {
+                        return reject(new Error(`HTTP ${res.status}`));
+                    }
+
+                    const arrayBuffer = res.response;
+
+                    try {
+                        const base64 = arrayBufferToBase64(arrayBuffer);
+                        await GM_setValue(CACHE_KEY, {
+                            code: base64,
+                            timestamp: NOW,
+                        });
+                    } catch (e) {
+                        console.warn('Failed to cache WASM:', e);
+                        // Continue anyway
+                    }
+
+                    resolve(arrayBuffer);
+                },
+                onerror: (err) => {
+                    console.error('GM_xmlhttpRequest failed:', err);
+                    reject(err);
+                },
+            });
+        });
+    };
+
+    function patchFetchPlayer(bin) {
+        const origFetch = window.fetch;
+        window.fetch = new Proxy(origFetch, {
+            apply(target, thisArg, args) {
+                const [url] = args;
+                if (
+                    typeof url === 'string' &&
+                    url.endsWith('dotlottie-player.wasm')
+                ) {
+                    return Promise.resolve(
+                        new Response(bin, {
+                            status: 200,
+                            headers: { 'Content-Type': 'application/wasm' },
+                        })
+                    );
+                }
+                return Reflect.apply(target, thisArg, args);
+            },
+        });
+    }
+
     GM_addStyle(`
-    span.${UNIQUE_EMOJI_CLASS} {
-    all: unset;              /* strip ALL inherited & UA styles */
-    display: inline-block;   /* so width/height work */
-    overflow: hidden;        /* keep canvas clipped if it overflows */
-    line-height: 1;          /* avoid extra line spacing */
-    vertical-align: -0.1em;  /* match emoji baseline alignment */
-    }
-    
-    span.${UNIQUE_EMOJI_CLASS} > canvas {
-    display: block;          /* prevent baseline spacing on canvas */
-    object-fit: contain;
-    image-rendering: crisp-edges;
-    }
-`);
+        span.${UNIQUE_EMOJI_CLASS} {
+            all: unset;              /* strip ALL inherited & UA styles */
+            display: inline-block;   /* so width/height work */
+            overflow: hidden;        /* keep canvas clipped if it overflows */
+            line-height: 1;          /* avoid extra line spacing */
+            vertical-align: -0.1em;  /* match emoji baseline alignment */
+        }
+        
+        span.${UNIQUE_EMOJI_CLASS} > canvas {
+            display: block;          /* prevent baseline spacing on canvas */
+            object-fit: contain;
+            image-rendering: crisp-edges;
+        }
+    `);
 
     const getEmojiData = () => {
         return new Promise((resolve, reject) => {
@@ -100,6 +188,59 @@ const DEBUG_MODE = true;
         });
     };
 
+    let isCacheDirty = false;
+    const saveLottieCache = () => {
+        if (isCacheDirty) {
+            if (DEBUG_MODE) {
+                console.log(
+                    'Cache is dirty, saving to storage on page hide/visibility change...'
+                );
+            }
+            GM_setValue(LOTTIE_CACHE_KEY, cachedLottie);
+            isCacheDirty = false;
+        }
+    };
+    document.addEventListener('visibilitychange', saveLottieCache);
+    document.addEventListener('pagehide', saveLottieCache);
+
+    function processRequestQueue() {
+        if (
+            requestQueue.length === 0 ||
+            activeRequests >= MAX_CONCURRENT_REQUESTS
+        ) {
+            return;
+        }
+
+        activeRequests++;
+        const { codepoint, resolve, reject } = requestQueue.shift();
+
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: LOTTIE_URL_PATTERN.replace('{codepoint}', codepoint),
+            responseType: 'json',
+            onload: (response) => {
+                if (response.status === 200) {
+                    const data = response.response;
+                    lottieCache[codepoint] = data;
+                    cachedLottie[codepoint] = {
+                        data,
+                        timestamp: Date.now(),
+                    };
+                    isCacheDirty = true;
+                    resolve(data);
+                } else {
+                    reject('Failed to load Lottie animation');
+                }
+            },
+            onerror: reject,
+            onloadend: () => {
+                delete pendingLottieRequests[codepoint];
+                activeRequests--;
+                processRequestQueue();
+            },
+        });
+    }
+
     const getLottieAnimationData = (codepoint) => {
         if (lottieCache[codepoint]) {
             return Promise.resolve(lottieCache[codepoint]);
@@ -107,36 +248,16 @@ const DEBUG_MODE = true;
         if (pendingLottieRequests[codepoint]) {
             return pendingLottieRequests[codepoint];
         }
+
         const promise = new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method: 'GET',
-                url: LOTTIE_URL_PATTERN.replace('{codepoint}', codepoint),
-                responseType: 'json',
-                onload: (response) => {
-                    if (response.status === 200) {
-                        const data = response.response;
-                        lottieCache[codepoint] = data;
-                        cachedLottie[codepoint] = {
-                            data,
-                            timestamp: Date.now(),
-                        };
-                        GM_setValue(LOTTIE_CACHE_KEY, cachedLottie);
-                        resolve(data);
-                    } else {
-                        reject('Failed to load Lottie animation');
-                    }
-                },
-                onerror: reject,
-                onloadend: () => {
-                    delete pendingLottieRequests[codepoint];
-                },
-            });
+            requestQueue.push({ codepoint, resolve, reject });
+            processRequestQueue();
         });
+
         pendingLottieRequests[codepoint] = promise;
         return promise;
     };
 
-    // === CONFIG ===
     const SCALE_FACTOR = 1.1; // Matches Emoiterra sizing
     const allDotLotties = new Set();
 
@@ -150,61 +271,80 @@ const DEBUG_MODE = true;
         align: [0.5, 0.5],
     };
 
-    function createLazyEmojiSpan(emoji, animationData, referenceNode) {
-        if (!animationData || typeof animationData !== 'object') {
-            throw new Error('Invalid animation data');
-        }
-
-        const span = document.createElement('span');
-        span.className = UNIQUE_EMOJI_CLASS;
-        span.dataset.emoji = emoji;
-        span.title = `${emoji} (emoji u${emoji.codePointAt(0).toString(16)})`;
-
-        // Dynamically size to match replaced emoji
-        let fontSizePx = 16;
-        if (referenceNode && referenceNode.parentNode) {
-            fontSizePx = parseFloat(
-                getComputedStyle(referenceNode.parentNode).fontSize
-            );
-        }
-        const scale = SCALE_FACTOR; // tweak for visual match
-        span.style.width = fontSizePx * scale + 'px';
-        span.style.height = fontSizePx * scale + 'px';
-
-        const canvas = document.createElement('canvas');
-        canvas.width = fontSizePx * scale;
-        canvas.height = fontSizePx * scale;
-        canvas.style.width = fontSizePx * scale + 'px';
-        canvas.style.height = fontSizePx * scale + 'px';
-
-        span.appendChild(canvas);
-
-        // Lazy load animation when visible
-        const observer = new IntersectionObserver((entries) => {
+    const sharedIO = new IntersectionObserver(
+        async (entries) => {
             for (const entry of entries) {
+                const span = entry.target;
                 if (entry.isIntersecting) {
                     let player = span.dotLottiePlayer;
                     if (!player) {
-                        player = new DotLottie({
-                            canvas,
-                            data: animationData,
-                            loop: true,
-                            autoplay: true,
-                            renderConfig: renderCfg,
-                            layout: layoutCfg,
-                        });
-                        span.dotLottiePlayer = player;
-                        allDotLotties.add(player);
+                        getLottieAnimationData(span.dataset.codepoint).then(
+                            (animationData) => {
+                                // Clear the text placeholder before adding the canvas
+                                span.textContent = '';
+
+                                const canvas = document.createElement('canvas');
+                                let size = Number(
+                                    span.style.width.replace('px', '')
+                                );
+                                canvas.width = size;
+                                canvas.height = size;
+                                canvas.style.width = size + 'px';
+                                canvas.style.height = size + 'px';
+                                span.appendChild(canvas);
+                                player = new DotLottie({
+                                    canvas,
+                                    data: animationData,
+                                    loop: true,
+                                    autoplay: true,
+                                    renderConfig: renderCfg,
+                                    layout: layoutCfg,
+                                });
+                                span.dotLottiePlayer = player;
+                                allDotLotties.add(player);
+                            }
+                        );
                     }
-                    player.play();
+                    if (player) player.play();
                 } else {
                     if (span.dotLottiePlayer) {
                         span.dotLottiePlayer.pause();
                     }
                 }
             }
-        });
-        observer.observe(span);
+        },
+        { rootMargin: '100px' }
+    );
+
+    function createLazyEmojiSpan(emoji, referenceNode) {
+        const span = document.createElement('span');
+        span.className = UNIQUE_EMOJI_CLASS;
+        span.dataset.emoji = emoji;
+        span.dataset.codepoint = emojiToCodepoint.get(emoji);
+        span.title = `${emoji} (emoji u${emoji.codePointAt(0).toString(16)})`;
+
+        // Dynamically size to match replaced emoji
+        let fontSizePx = 16;
+        let parentStyle;
+        if (referenceNode && referenceNode.parentNode) {
+            parentStyle = getComputedStyle(referenceNode.parentNode);
+            fontSizePx = parseFloat(parentStyle.fontSize);
+        }
+        const scale = SCALE_FACTOR; // tweak for visual match
+        const finalSize = fontSizePx * scale;
+        span.style.width = finalSize + 'px';
+        span.style.height = finalSize + 'px';
+
+        // Use the original emoji as a placeholder
+        span.textContent = emoji;
+        // Style the placeholder to be centered and sized correctly
+        if (parentStyle) {
+            span.style.fontSize = parentStyle.fontSize;
+        }
+        span.style.lineHeight = finalSize + 'px';
+        span.style.textAlign = 'center';
+
+        sharedIO.observe(span);
 
         return span;
     }
@@ -218,9 +358,42 @@ const DEBUG_MODE = true;
         }
     });
 
-    // === MAIN REPLACEMENT ===
     async function replaceEmojiInTextNode(node) {
-        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const SKIP = new Set([
+            'SCRIPT',
+            'STYLE',
+            'NOSCRIPT',
+            'TEXTAREA',
+            'INPUT',
+            'CODE',
+            'PRE',
+            'SVG',
+            'CANVAS',
+        ]);
+
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+            acceptNode(textNode) {
+                // Reject nodes based on their parent's properties
+                const parent = textNode.parentNode;
+                if (!parent) return NodeFilter.FILTER_REJECT;
+
+                if (SKIP.has(parent.nodeName)) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                if (
+                    parent.closest(
+                        '[contenteditable=""], [contenteditable="true"]'
+                    )
+                ) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                if (parent.closest('.' + UNIQUE_EMOJI_CLASS)) {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+            },
+        });
+
         const replacements = [];
 
         //console.log('Current node: ' + walker.currentNode.nodeValue);
@@ -247,15 +420,14 @@ const DEBUG_MODE = true;
             const promises = emojisToProcess.map((emoji) =>
                 getLottieAnimationData(emoji.codepoint)
             );
-            // needs to be improved, we should be processing the finished ones
-            const results = await Promise.allSettled(promises);
 
             const frag = document.createDocumentFragment();
             let lastIndex = 0;
 
             emojisToProcess.forEach((emoji, i) => {
                 const { match } = emoji;
-                const result = results[i];
+                //const result = results[i];
+                const animPromise = promises[i];
 
                 if (match.index > lastIndex) {
                     frag.appendChild(
@@ -264,13 +436,8 @@ const DEBUG_MODE = true;
                         )
                     );
                 }
-                if (result.status === 'fulfilled') {
-                    frag.appendChild(
-                        createLazyEmojiSpan(match[0], result.value, textNode)
-                    );
-                } else {
-                    frag.appendChild(document.createTextNode(match[0])); // fallback
-                }
+
+                frag.appendChild(createLazyEmojiSpan(match[0], textNode));
                 lastIndex = match.index + match[0].length;
             });
 
@@ -299,7 +466,7 @@ const DEBUG_MODE = true;
                 continue;
             }
 
-            // CASE: parent is a "bare" span containing only this text node
+            // move a single new span, in a span, up a level, with the correct styling.
             if (
                 parent.tagName === 'SPAN' &&
                 parent.childNodes.length === 1 &&
@@ -325,55 +492,25 @@ const DEBUG_MODE = true;
     const processAddedNode = async (node) => {
         if (!document.body || !document.body.contains(node)) return;
         replaceEmojiInTextNode(node);
-        return;
-        if (node.nodeType === Node.TEXT_NODE) {
-            if (DEBUG_MODE) {
-                console.log('first type');
-            }
-            replaceEmojiInTextNode(node);
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-            const SKIP = new Set([
-                'SCRIPT',
-                'STYLE',
-                'NOSCRIPT',
-                'TEXTAREA',
-                'INPUT',
-                'CODE',
-                'PRE',
-                'SVG',
-                'CANVAS',
-            ]);
-            const walker = document.createTreeWalker(
-                node,
-                NodeFilter.SHOW_TEXT,
-                {
-                    acceptNode(node) {
-                        const parent = node.parentNode;
-                        if (!parent) return NodeFilter.FILTER_REJECT;
-                        if (SKIP.has(parent.nodeName))
-                            return NodeFilter.FILTER_REJECT;
-                        if (
-                            parent.closest(
-                                '[contenteditable=""], [contenteditable="true"]'
-                            )
-                        )
-                            return NodeFilter.FILTER_REJECT;
-                        if (parent.closest('.' + UNIQUE_EMOJI_CLASS))
-                            return NodeFilter.FILTER_REJECT;
-                        if (!node.nodeValue || !node.nodeValue.trim())
-                            return NodeFilter.FILTER_REJECT;
-                        return NodeFilter.FILTER_ACCEPT;
-                    },
-                }
-            );
-            while (walker.nextNode())
-                replaceEmojiInTextNode(walker.currentNode);
-        }
     };
 
     let observerCount = 0;
     let debouncedNodes = new Set();
     let debouncedTimeout = null;
+
+    function processDebouncedNodes() {
+        if (debouncedNodes.size === 0) {
+            debouncedTimeout = null;
+            return;
+        }
+        const node = debouncedNodes.values().next().value;
+        debouncedNodes.delete(node);
+
+        processAddedNode(node);
+
+        // Re-schedule the processing for the next node in the queue - timeslice it
+        debouncedTimeout = setTimeout(processDebouncedNodes, 0);
+    }
 
     const getNodesFromMutations = (mutationsList) => {
         const nodes = new Set();
@@ -400,7 +537,7 @@ const DEBUG_MODE = true;
                 mutation.type === 'childList' &&
                 mutation.addedNodes.length > 0
             ) {
-                mutation.addedNodes.forEach(node => newNodes.add(node));
+                mutation.addedNodes.forEach((node) => newNodes.add(node));
             } else if (
                 ['characterData', 'attributes'].includes(mutation.type)
             ) {
@@ -408,13 +545,19 @@ const DEBUG_MODE = true;
             }
 
             // Handle removed nodes
-            if (mutation.type === 'childList' && mutation.removedNodes.length > 0) {
-                mutation.removedNodes.forEach(node => {
-                    if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains(UNIQUE_EMOJI_CLASS)) {
+            if (
+                mutation.type === 'childList' &&
+                mutation.removedNodes.length > 0
+            ) {
+                mutation.removedNodes.forEach((node) => {
+                    if (
+                        node.nodeType === Node.ELEMENT_NODE &&
+                        node.classList.contains(UNIQUE_EMOJI_CLASS)
+                    ) {
                         if (node.dotLottiePlayer) {
-                            node.dotLottiePlayer.destroy(); // Assuming DotLottie has a destroy method
+                            node.dotLottiePlayer.destroy();
                             allDotLotties.delete(node.dotLottiePlayer);
-                            delete node.dotLottiePlayer; // Clean up reference
+                            delete node.dotLottiePlayer;
                         }
                     }
                 });
@@ -425,7 +568,7 @@ const DEBUG_MODE = true;
             newNodes.forEach(processAddedNode);
             return;
         }
-        if (debouncedTimeout) clearTimeout(debouncedTimeout);
+
         newNodes.forEach((node) => {
             if (node.nodeType !== Node.ELEMENT_NODE) {
                 debouncedNodes.add(node);
@@ -448,16 +591,19 @@ const DEBUG_MODE = true;
             }
             debouncedNodes.add(node);
         });
-        debouncedTimeout = setTimeout(() => {
-            debouncedNodes.forEach(processAddedNode);
-            debouncedNodes.clear();
-            debouncedTimeout = null;
-        }, DEBOUNCE_DELAY_MS);
+
+        if (debouncedTimeout) return;
+
+        debouncedTimeout = setTimeout(processDebouncedNodes, DEBOUNCE_DELAY_MS);
     });
 
     const main = async () => {
         try {
-            // Start both fetches in parallel
+            loadWasm(WASMPLAYERURL).then((bin) => {
+                patchFetchPlayer(bin);
+                if (DEBUG_MODE) console.log('Player wasm patched');
+            });
+
             const emojiDataPromise = getEmojiData();
             const lottieCachePromise = new Promise((resolve) =>
                 resolve(GM_getValue(LOTTIE_CACHE_KEY, {}))
@@ -477,7 +623,7 @@ const DEBUG_MODE = true;
                     }
                 }
                 if (cacheNeedsUpdate) {
-                    GM_setValue(LOTTIE_CACHE_KEY, cachedLottie);
+                    isCacheDirty = true;
                 }
                 if (DEBUG_MODE) {
                     console.log(
@@ -507,12 +653,14 @@ const DEBUG_MODE = true;
                 }
             });
 
-            // Wait for both to complete before starting the observer
+            // Wait for all to complete before starting the observer
             await Promise.all([emojiDataPromise, lottieCachePromise]);
 
             if (DEBUG_MODE) {
                 console.log(
-                    'Script startup time: ' + (Date.now() - scriptStartTime) + 'ms'
+                    'Script startup time: ' +
+                        (Date.now() - scriptStartTime) +
+                        'ms'
                 );
             }
 
