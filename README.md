@@ -2,6 +2,8 @@
 
 This userscript animates emojis on any website using the [Noto Animated Emoji](https://googlefonts.github.io/noto-emoji-animation/) set from Google.
 
+![Animated Emoji Demo](animated-emoji.gif)
+
 ## Installation
 
 1.  Install a userscript manager in your browser, such as:
