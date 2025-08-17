@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-17_00-03
+// @version      2025-08-17_15-54
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -36,7 +36,6 @@ const DEBUG_MODE = false;
     const CACHE_EXPIRATION_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
     const DEBOUNCE_DELAY_MS = 10;
     const DEBOUNCE_THRESHOLD = 25;
-    const DEBOUNCE_SAVE_DELAY_MS = 5000;
     const emojiRegex = /\p{RGI_Emoji}/gv;
 
     let requestQueue = [];
@@ -48,6 +47,25 @@ const DEBUG_MODE = false;
     let pendingLottieRequests = {};
     let emojiNameMap = {};
     const emojiToCodepoint = new Map();
+
+    GM_addStyle(`
+        span.${UNIQUE_EMOJI_CLASS} {
+    display: inline-flex;       /* inline, but flex container */
+    justify-content: center;    /* center horizontally */
+    align-items: center;        /* center vertically */
+    overflow: hidden;
+    line-height: 1;
+    vertical-align: -0.1em;
+        }
+        
+        span.${UNIQUE_EMOJI_CLASS} > canvas {
+            display: inline-block;
+    width: 100% !important;     /* scale properly */
+    height: 100% !important;
+    object-fit: contain;
+    image-rendering: crisp-edges;
+        }
+    `);
 
     function base64ToBytes(base64) {
         const binString = atob(base64);
@@ -140,22 +158,6 @@ const DEBUG_MODE = false;
             },
         });
     }
-
-    GM_addStyle(`
-        span.${UNIQUE_EMOJI_CLASS} {
-            all: unset;              /* strip ALL inherited & UA styles */
-            display: inline-block;   /* so width/height work */
-            overflow: hidden;        /* keep canvas clipped if it overflows */
-            line-height: 1;          /* avoid extra line spacing */
-            vertical-align: -0.1em;  /* match emoji baseline alignment */
-        }
-        
-        span.${UNIQUE_EMOJI_CLASS} > canvas {
-            display: block;          /* prevent baseline spacing on canvas */
-            object-fit: contain;
-            image-rendering: crisp-edges;
-        }
-    `);
 
     const getEmojiData = () => {
         return new Promise((resolve, reject) => {
@@ -267,7 +269,7 @@ const DEBUG_MODE = false;
         autoResize: true,
     };
     const layoutCfg = {
-        fit: 'fill',
+        //fit: 'fill',
         align: [0.5, 0.5],
     };
 
@@ -280,18 +282,18 @@ const DEBUG_MODE = false;
                     if (!player) {
                         getLottieAnimationData(span.dataset.codepoint).then(
                             (animationData) => {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = Math.round(
+                                    span.finalSize * 1.1 * 0.9
+                                );
+                                canvas.height = Math.round(
+                                    span.finalSize * 1.1
+                                );
+
                                 // Clear the text placeholder before adding the canvas
                                 span.textContent = '';
-
-                                const canvas = document.createElement('canvas');
-                                let size = Number(
-                                    span.style.width.replace('px', '')
-                                );
-                                canvas.width = size;
-                                canvas.height = size;
-                                canvas.style.width = size + 'px';
-                                canvas.style.height = size + 'px';
                                 span.appendChild(canvas);
+
                                 player = new DotLottie({
                                     canvas,
                                     data: animationData,
@@ -323,26 +325,18 @@ const DEBUG_MODE = false;
         span.dataset.codepoint = emojiToCodepoint.get(emoji);
         span.title = `${emoji} (emoji u${emoji.codePointAt(0).toString(16)})`;
 
-        // Dynamically size to match replaced emoji
         let fontSizePx = 16;
+
         let parentStyle;
         if (referenceNode && referenceNode.parentNode) {
             parentStyle = getComputedStyle(referenceNode.parentNode);
             fontSizePx = parseFloat(parentStyle.fontSize);
         }
         const scale = SCALE_FACTOR; // tweak for visual match
-        const finalSize = fontSizePx * scale;
-        span.style.width = finalSize + 'px';
-        span.style.height = finalSize + 'px';
+        const finalSize = Math.round(fontSizePx * scale);
+        span.finalSize = finalSize;
 
-        // Use the original emoji as a placeholder
         span.textContent = emoji;
-        // Style the placeholder to be centered and sized correctly
-        if (parentStyle) {
-            span.style.fontSize = parentStyle.fontSize;
-        }
-        span.style.lineHeight = finalSize + 'px';
-        span.style.textAlign = 'center';
 
         sharedIO.observe(span);
 
@@ -357,6 +351,12 @@ const DEBUG_MODE = false;
             allDotLotties.forEach((p) => p.play());
         }
     });
+    // Shouldn't be needed?
+    /*
+    document.addEventListener('pagehide', () => {
+        allDotLotties.forEach((p) => p.pause());
+    });
+    */
 
     async function replaceEmojiInTextNode(node) {
         const SKIP = new Set([
@@ -373,7 +373,6 @@ const DEBUG_MODE = false;
 
         const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
             acceptNode(textNode) {
-                // Reject nodes based on their parent's properties
                 const parent = textNode.parentNode;
                 if (!parent) return NodeFilter.FILTER_REJECT;
 
@@ -417,6 +416,7 @@ const DEBUG_MODE = false;
                 .filter(Boolean);
 
             if (emojisToProcess.length === 0) continue;
+            // do we want to try and set to pre-fetching all the emoji? can cut this to do it only on demand as they appear in the visibility observer
             const promises = emojisToProcess.map((emoji) =>
                 getLottieAnimationData(emoji.codepoint)
             );
@@ -426,8 +426,6 @@ const DEBUG_MODE = false;
 
             emojisToProcess.forEach((emoji, i) => {
                 const { match } = emoji;
-                //const result = results[i];
-                const animPromise = promises[i];
 
                 if (match.index > lastIndex) {
                     frag.appendChild(
@@ -452,9 +450,8 @@ const DEBUG_MODE = false;
         if (DEBUG_MODE) {
             console.log('processing all replacements = ' + replacements.length);
         }
-        // Apply all replacements in one pass
+
         for (const { textNode, frag } of replacements) {
-            // Determine replacement target
             const parent = textNode.parentNode;
             if (!parent) {
                 if (DEBUG_MODE) {
