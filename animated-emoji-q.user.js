@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-17_15-54
+// @version      2025-08-17_20-53
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -50,20 +50,20 @@ const DEBUG_MODE = false;
 
     GM_addStyle(`
         span.${UNIQUE_EMOJI_CLASS} {
-    display: inline-flex;       /* inline, but flex container */
-    justify-content: center;    /* center horizontally */
-    align-items: center;        /* center vertically */
-    overflow: hidden;
-    line-height: 1;
-    vertical-align: -0.1em;
+            display: inline-flex;       /* inline, but flex container */
+            justify-content: center;    /* center horizontally */
+            align-items: center;        /* center vertically */
+            overflow: hidden;
+            line-height: 1;
+            vertical-align: -0.1em;
         }
         
         span.${UNIQUE_EMOJI_CLASS} > canvas {
             display: inline-block;
-    width: 100% !important;     /* scale properly */
-    height: 100% !important;
-    object-fit: contain;
-    image-rendering: crisp-edges;
+            width: 100% !important;     /* scale properly */
+            height: 100% !important;
+            object-fit: contain;
+            image-rendering: crisp-edges;
         }
     `);
 
@@ -74,9 +74,11 @@ const DEBUG_MODE = false;
 
     function arrayBufferToBase64(buffer) {
         const bytes = new Uint8Array(buffer);
+        const CHUNK_SIZE = 1024;
         let binary = '';
-        for (let i = 0; i < bytes.length; i++) {
-            binary += String.fromCharCode(bytes[i]);
+        for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+            const chunk = bytes.subarray(i, i + CHUNK_SIZE);
+            binary += String.fromCharCode.apply(null, chunk);
         }
         return btoa(binary);
     }
