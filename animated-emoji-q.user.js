@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-17_22-10
+// @version      2025-08-18_18-22
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
 // @match        *://*/*
 // @run-at       document-start
+// @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
 // @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@7594952f537e155b66c2c4ae59dcb0bda0635f52/build/dotlottie-web-iife.js
 // @grant        GM_xmlhttpRequest
