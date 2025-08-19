@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-18_18-22
+// @version      2025-08-19_22-43
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -151,11 +151,10 @@ const config = {
         const origFetch = window.fetch;
         window.fetch = new Proxy(origFetch, {
             apply(target, thisArg, args) {
-                const [url] = args;
-                if (
-                    typeof url === 'string' &&
-                    url.endsWith('dotlottie-player.wasm')
-                ) {
+                const resource = args[0];
+                const url =
+                    typeof resource === 'string' ? resource : resource.url;
+                if (url.endsWith('dotlottie-player.wasm')) {
                     return Promise.resolve(
                         new Response(bin, {
                             status: 200,
