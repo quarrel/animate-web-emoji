@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-21_22-34
+// @version      2025-08-22_01-10
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -224,7 +224,7 @@ const config = {
                     await GM.setValue(uniqueCacheKey, dataToCache);
                     resolve(data);
                 } else {
-                    reject('Failed to load Lottie animation');
+                    reject('Failed to load Lottie animation: ' + codepoint);
                 }
             },
             onerror: reject,
@@ -285,19 +285,32 @@ const config = {
                 if (entry.isIntersecting) {
                     let player = span.dotLottiePlayer;
                     if (!player) {
-                        getLottieAnimationData(span.dataset.codepoint).then(
-                            (animationData) => {
+                        getLottieAnimationData(span.dataset.codepoint)
+                            .then((animationData) => {
                                 const canvas = document.createElement('canvas');
                                 // Set bitmap size
-                                canvas.width = Math.round(span.finalSize * 0.9);
+                                canvas.width = Math.round(span.finalSize); // widths are mostly 90% of height, but feels weird to use it .. ???
                                 canvas.height = Math.round(span.finalSize);
                                 // Set CSS size
                                 canvas.style.width = `${Math.round(
-                                    span.finalSize * 0.9
+                                    span.finalSize
                                 )}px`;
                                 canvas.style.height = `${Math.round(
                                     span.finalSize
                                 )}px`;
+
+                                /*
+                                console.log(
+                                    span.dataset.emoji +
+                                        ': ' +
+                                        'width = ' +
+                                        canvas.width +
+                                        ', height = ' +
+                                        canvas.height +
+                                        ', finalSize = ' +
+                                        span.finalSize
+                                );
+                                */
 
                                 // Clear the text placeholder before adding the canvas
                                 span.textContent = '';
@@ -313,8 +326,16 @@ const config = {
                                 });
                                 span.dotLottiePlayer = player;
                                 allDotLotties.add(player);
-                            }
-                        );
+                            })
+                            .catch((err) => {
+                                if (config.DEBUG_MODE) {
+                                    console.error(
+                                        'Failed to load emoji animation, leaving as text.',
+                                        err
+                                    );
+                                }
+                                sharedIO.unobserve(span);
+                            });
                     }
                     if (player) player.play();
                 } else {
@@ -349,15 +370,27 @@ const config = {
         span.dataset.codepoint = emojiToCodepoint.get(emoji);
         span.title = `${emoji} (emoji u${emoji.codePointAt(0).toString(16)})`;
 
-        let fontSizePx = 16;
-
-        let parentStyle;
+        let finalSize;
         if (referenceNode && referenceNode.parentNode) {
-            parentStyle = getComputedStyle(referenceNode.parentNode);
-            fontSizePx = parseFloat(parentStyle.fontSize);
+            const parentStyle = getComputedStyle(referenceNode.parentNode);
+            const fontSizePx = parseFloat(parentStyle.fontSize);
+            let blockSizePx = parseFloat(parentStyle.blockSize);
+
+            if (isNaN(blockSizePx)) {
+                blockSizePx = fontSizePx;
+            }
+
+            // If blockSize is significantly larger than fontSize, it's likely due to
+            // line-height or padding. In such cases, fontSize is a more reliable measure.
+            if (blockSizePx > fontSizePx * 1.2) {
+                finalSize = Math.round(fontSizePx * config.SCALE_FACTOR);
+            } else {
+                finalSize = Math.round(blockSizePx);
+            }
+        } else {
+            finalSize = 16; // Fallback size
         }
-        const scale = config.SCALE_FACTOR; // tweak for visual match
-        const finalSize = Math.round(fontSizePx * scale);
+
         span.finalSize = finalSize;
 
         span.textContent = emoji;
@@ -435,7 +468,9 @@ const config = {
             if (emojisToProcess.length === 0) continue;
             // do we want to try and set to pre-fetching all the emoji? can cut this to do it only on demand as they appear in the visibility observer
             const promises = emojisToProcess.map((emoji) =>
-                getLottieAnimationData(emoji.codepoint)
+                getLottieAnimationData(emoji.codepoint).catch(() => {
+                    // This is for pre-fetching, errors will be handled by the IntersectionObserver
+                })
             );
 
             const frag = document.createDocumentFragment();
@@ -463,9 +498,6 @@ const config = {
             }
 
             replacements.push({ textNode, frag });
-        }
-        if (config.DEBUG_MODE) {
-            console.log('processing all replacements = ' + replacements.length);
         }
 
         for (const { textNode, frag } of replacements) {
