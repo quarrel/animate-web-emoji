@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-21_18-36
+// @version      2025-08-21_22-26
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -10,10 +10,10 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
 // @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@7594952f537e155b66c2c4ae59dcb0bda0635f52/build/dotlottie-web-iife.js
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
-// @grant        GM_addStyle
+// @grant        GM.xmlhttpRequest
+// @grant        GM.setValue
+// @grant        GM.getValue
+// @grant        GM.addStyle
 // @license      MIT
 // @downloadURL  https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q
 // ==/UserScript==
@@ -21,7 +21,7 @@
 'use strict';
 
 const config = {
-    DEBUG_MODE: true,
+    DEBUG_MODE: false,
     WASM_PLAYER_URL:
         'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.0/dist/dotlottie-player.wasm',
     EMOJI_DATA_URL:
@@ -30,7 +30,7 @@ const config = {
         'https://fonts.gstatic.com/s/e/notoemoji/latest/{codepoint}/lottie.json',
     UNIQUE_EMOJI_CLASS: 'animated-emoji-q',
     EMOJI_DATA_CACHE_KEY: 'animated-emoji-q-noto-emoji-data-cache',
-    LOTTIE_CACHE_KEY: 'animated-emoji-q-noto-lottie-cache',
+    LOTTIE_CACHE_KEY: 'animated-emoji-q-lottie',
     CACHE_EXPIRATION_MS: 14 * 24 * 60 * 60 * 1000, // 14 days
     DEBOUNCE_DELAY_MS: 10,
     DEBOUNCE_THRESHOLD: 25,
@@ -46,28 +46,23 @@ const config = {
     let requestQueue = [];
     let activeRequests = 0;
 
-    let lottieCache = {};
-    let cachedLottie = {};
-    let lottieCachePromise = null;
     let emojiDataPromise = null;
     let pendingLottieRequests = {};
     let emojiNameMap = {};
     const emojiToCodepoint = new Map();
 
-    GM_addStyle(`
+    GM.addStyle(`
         span.${config.UNIQUE_EMOJI_CLASS} {
-            display: inline-flex;       // inline, but flex container
-            justify-content: center;    // center horizontally
-            align-items: center;        // center vertically
-            overflow: hidden;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            vertical-align: middle;
             line-height: 1;
-            vertical-align: -0.1em;
+            overflow: hidden;
         }
         
         span.${config.UNIQUE_EMOJI_CLASS} > canvas {
-            display: inline-block;
-            width: 100% !important;     // scale properly
-            height: 100% !important;
+            /* Sizing is now set by JS */
             object-fit: contain;
             image-rendering: crisp-edges;
         }
@@ -94,7 +89,7 @@ const config = {
             const CACHE_KEY = `wasm_cache_${url}`;
             const NOW = Date.now();
 
-            const cached = await GM_getValue(CACHE_KEY, null);
+            const cached = await GM.getValue(CACHE_KEY, null);
 
             if (
                 cached &&
@@ -117,7 +112,7 @@ const config = {
                 console.log('Fetching WASM:', url);
             }
 
-            GM_xmlhttpRequest({
+            GM.xmlhttpRequest({
                 method: 'GET',
                 url,
                 responseType: 'arraybuffer',
@@ -130,7 +125,7 @@ const config = {
 
                     try {
                         const base64 = arrayBufferToBase64(arrayBuffer);
-                        await GM_setValue(CACHE_KEY, {
+                        await GM.setValue(CACHE_KEY, {
                             code: base64,
                             timestamp: NOW,
                         });
@@ -142,7 +137,7 @@ const config = {
                     resolve(arrayBuffer);
                 },
                 onerror: (err) => {
-                    console.error('GM_xmlhttpRequest failed:', err);
+                    console.error('GM.xmlhttpRequest failed:', err);
                     reject(err);
                 },
             });
@@ -171,7 +166,7 @@ const config = {
 
     const getEmojiData = () => {
         return new Promise(async (resolve, reject) => {
-            const cachedData = await GM_getValue(
+            const cachedData = await GM.getValue(
                 config.EMOJI_DATA_CACHE_KEY,
                 null
             );
@@ -182,7 +177,7 @@ const config = {
                 resolve(cachedData.data);
                 return;
             }
-            GM_xmlhttpRequest({
+            GM.xmlhttpRequest({
                 method: 'GET',
                 url: config.EMOJI_DATA_URL,
                 responseType: 'json',
@@ -192,7 +187,7 @@ const config = {
                             data: response.response,
                             timestamp: Date.now(),
                         };
-                        GM_setValue(config.EMOJI_DATA_CACHE_KEY, dataToCache);
+                        GM.setValue(config.EMOJI_DATA_CACHE_KEY, dataToCache);
                         resolve(response.response);
                     } else {
                         reject('Failed to load emoji data');
@@ -201,19 +196,6 @@ const config = {
                 onerror: reject,
             });
         });
-    };
-
-    let isCacheDirty = false;
-    const saveLottieCache = () => {
-        if (isCacheDirty) {
-            if (config.DEBUG_MODE) {
-                console.log(
-                    'Cache is dirty, saving to storage on page hide/visibility change...'
-                );
-            }
-            GM_setValue(config.LOTTIE_CACHE_KEY, cachedLottie);
-            isCacheDirty = false;
-        }
     };
 
     function processRequestQueue() {
@@ -227,19 +209,19 @@ const config = {
         activeRequests++;
         const { codepoint, resolve, reject } = requestQueue.shift();
 
-        GM_xmlhttpRequest({
+        GM.xmlhttpRequest({
             method: 'GET',
             url: config.LOTTIE_URL_PATTERN.replace('{codepoint}', codepoint),
             responseType: 'json',
-            onload: (response) => {
+            onload: async (response) => {
                 if (response.status === 200) {
                     const data = response.response;
-                    lottieCache[codepoint] = data;
-                    cachedLottie[codepoint] = {
+                    const uniqueCacheKey = `${config.LOTTIE_CACHE_KEY}_${codepoint}`;
+                    const dataToCache = {
                         data,
                         timestamp: Date.now(),
                     };
-                    isCacheDirty = true;
+                    await GM.setValue(uniqueCacheKey, dataToCache);
                     resolve(data);
                 } else {
                     reject('Failed to load Lottie animation');
@@ -254,14 +236,27 @@ const config = {
         });
     }
 
-    const getLottieAnimationData = (codepoint) => {
-        if (lottieCache[codepoint]) {
-            return Promise.resolve(lottieCache[codepoint]);
+    const getLottieAnimationData = async (codepoint) => {
+        const uniqueCacheKey = `${config.LOTTIE_CACHE_KEY}_${codepoint}`;
+
+        const cached = await GM.getValue(uniqueCacheKey, null);
+        if (
+            cached &&
+            cached.timestamp > Date.now() - config.CACHE_EXPIRATION_MS
+        ) {
+            if (config.DEBUG_MODE) {
+                //console.log(`Lottie cache hit for ${codepoint}`);
+            }
+            return cached.data;
         }
+
         if (pendingLottieRequests[codepoint]) {
             return pendingLottieRequests[codepoint];
         }
 
+        if (config.DEBUG_MODE) {
+            //console.log(`Lottie cache miss for ${codepoint}, fetching...`);
+        }
         const promise = new Promise((resolve, reject) => {
             requestQueue.push({ codepoint, resolve, reject });
             processRequestQueue();
@@ -274,9 +269,8 @@ const config = {
     const allDotLotties = new Set();
 
     const renderCfg = {
-        //    devicePixelRatio: 0.75, // this should happen automatically in dottie
         freezeOnOffscreen: true,
-        autoResize: true,
+        autoResize: false,
     };
     const layoutCfg = {
         //fit: 'fill',
@@ -290,21 +284,19 @@ const config = {
                 if (entry.isIntersecting) {
                     let player = span.dotLottiePlayer;
                     if (!player) {
-                        // buy as much time as we can to load the large cache out of memory. probably better off making it many small caches than one large
-                        if (lottieCachePromise) {
-                            await lottieCachePromise;
-                            lottieCachePromise = null;
-                        }
-
                         getLottieAnimationData(span.dataset.codepoint).then(
                             (animationData) => {
                                 const canvas = document.createElement('canvas');
-                                canvas.width = Math.round(
-                                    span.finalSize * config.SCALE_FACTOR * 0.9
-                                ); // emoji seem to normally have a 90% width of their height, wtf?
-                                canvas.height = Math.round(
-                                    span.finalSize * config.SCALE_FACTOR
-                                );
+                                // Set bitmap size
+                                canvas.width = Math.round(span.finalSize * 0.9);
+                                canvas.height = Math.round(span.finalSize);
+                                // Set CSS size
+                                canvas.style.width = `${Math.round(
+                                    span.finalSize * 0.9
+                                )}px`;
+                                canvas.style.height = `${Math.round(
+                                    span.finalSize
+                                )}px`;
 
                                 // Clear the text placeholder before adding the canvas
                                 span.textContent = '';
@@ -533,23 +525,6 @@ const config = {
         debouncedTimeout = setTimeout(processDebouncedNodes, 0);
     }
 
-    const getNodesFromMutations = (mutationsList) => {
-        const nodes = new Set();
-        for (const mutation of mutationsList) {
-            if (
-                mutation.type === 'childList' &&
-                mutation.addedNodes.length > 0
-            ) {
-                nodes.add(mutation.target);
-            } else if (
-                ['characterData', 'attributes'].includes(mutation.type)
-            ) {
-                nodes.add(mutation.target);
-            }
-        }
-        return nodes;
-    };
-
     const observer = new MutationObserver((mutationsList) => {
         observerCount++;
         const newNodes = new Set();
@@ -621,32 +596,6 @@ const config = {
         );
     });
 
-    const initializeCaches = async () => {
-        const storedLottieCache = await GM_getValue(
-            config.LOTTIE_CACHE_KEY,
-            {}
-        );
-        cachedLottie = storedLottieCache;
-        let cacheNeedsUpdate = false;
-        for (const codepoint in cachedLottie) {
-            const entry = cachedLottie[codepoint];
-            if (entry.timestamp > Date.now() - config.CACHE_EXPIRATION_MS) {
-                lottieCache[codepoint] = entry.data;
-            } else {
-                delete cachedLottie[codepoint];
-                cacheNeedsUpdate = true;
-            }
-        }
-        if (cacheNeedsUpdate) {
-            isCacheDirty = true;
-        }
-        if (config.DEBUG_MODE) {
-            console.log(
-                'Lottie cache loaded ' + (Date.now() - scriptStartTime) + 'ms'
-            );
-        }
-    };
-
     const initializeEmojiData = async () => {
         const emojiData = await getEmojiData();
         for (const icon of emojiData.icons) {
@@ -698,17 +647,8 @@ const config = {
                         );
                 });
 
-                lottieCachePromise = initializeCaches();
+                // Lottie cache initialization is removed.
                 emojiDataPromise = initializeEmojiData();
-
-                // Attach cache-saving listeners only after the cache has been loaded.
-                lottieCachePromise.then(() => {
-                    document.addEventListener(
-                        'visibilitychange',
-                        saveLottieCache
-                    );
-                    document.addEventListener('pagehide', saveLottieCache);
-                });
 
                 startObserver();
             }, 0);
