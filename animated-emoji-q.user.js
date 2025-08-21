@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-19_22-43
+// @version      2025-08-21_18-36
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -21,7 +21,7 @@
 'use strict';
 
 const config = {
-    DEBUG_MODE: false,
+    DEBUG_MODE: true,
     WASM_PLAYER_URL:
         'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.0/dist/dotlottie-player.wasm',
     EMOJI_DATA_URL:
@@ -48,15 +48,17 @@ const config = {
 
     let lottieCache = {};
     let cachedLottie = {};
+    let lottieCachePromise = null;
+    let emojiDataPromise = null;
     let pendingLottieRequests = {};
     let emojiNameMap = {};
     const emojiToCodepoint = new Map();
 
     GM_addStyle(`
         span.${config.UNIQUE_EMOJI_CLASS} {
-            display: inline-flex;       /* inline, but flex container */
-            justify-content: center;    /* center horizontally */
-            align-items: center;        /* center vertically */
+            display: inline-flex;       // inline, but flex container
+            justify-content: center;    // center horizontally
+            align-items: center;        // center vertically
             overflow: hidden;
             line-height: 1;
             vertical-align: -0.1em;
@@ -64,7 +66,7 @@ const config = {
         
         span.${config.UNIQUE_EMOJI_CLASS} > canvas {
             display: inline-block;
-            width: 100% !important;     /* scale properly */
+            width: 100% !important;     // scale properly
             height: 100% !important;
             object-fit: contain;
             image-rendering: crisp-edges;
@@ -168,8 +170,11 @@ const config = {
     }
 
     const getEmojiData = () => {
-        return new Promise((resolve, reject) => {
-            const cachedData = GM_getValue(config.EMOJI_DATA_CACHE_KEY, null);
+        return new Promise(async (resolve, reject) => {
+            const cachedData = await GM_getValue(
+                config.EMOJI_DATA_CACHE_KEY,
+                null
+            );
             if (
                 cachedData &&
                 cachedData.timestamp > Date.now() - config.CACHE_EXPIRATION_MS
@@ -210,8 +215,6 @@ const config = {
             isCacheDirty = false;
         }
     };
-    document.addEventListener('visibilitychange', saveLottieCache);
-    document.addEventListener('pagehide', saveLottieCache);
 
     function processRequestQueue() {
         if (
@@ -287,6 +290,12 @@ const config = {
                 if (entry.isIntersecting) {
                     let player = span.dotLottiePlayer;
                     if (!player) {
+                        // buy as much time as we can to load the large cache out of memory. probably better off making it many small caches than one large
+                        if (lottieCachePromise) {
+                            await lottieCachePromise;
+                            lottieCachePromise = null;
+                        }
+
                         getLottieAnimationData(span.dataset.codepoint).then(
                             (animationData) => {
                                 const canvas = document.createElement('canvas');
@@ -325,6 +334,21 @@ const config = {
         { rootMargin: '100px' }
     );
 
+    // Pause/play all animations when tab visibility changes
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            allDotLotties.forEach((p) => p.pause());
+        } else {
+            allDotLotties.forEach((p) => p.play());
+        }
+    });
+    // Shouldn't be needed?
+    /*
+        document.addEventListener('pagehide', () => {
+            allDotLotties.forEach((p) => p.pause());
+        });
+    */
+
     function createLazyEmojiSpan(emoji, referenceNode) {
         const span = document.createElement('span');
         span.className = config.UNIQUE_EMOJI_CLASS;
@@ -349,21 +373,6 @@ const config = {
 
         return span;
     }
-
-    // Pause/play all animations when tab visibility changes
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            allDotLotties.forEach((p) => p.pause());
-        } else {
-            allDotLotties.forEach((p) => p.play());
-        }
-    });
-    // Shouldn't be needed?
-    /*
-    document.addEventListener('pagehide', () => {
-        allDotLotties.forEach((p) => p.pause());
-    });
-    */
 
     async function replaceEmojiInTextNode(node) {
         const SKIP = new Set([
@@ -410,6 +419,13 @@ const config = {
             if (!text) continue;
 
             const matches = [...text.matchAll(emojiRegex)];
+
+            // we know we have emojis, now we need to make sure we have enough data loaded to create the span
+            if (emojiDataPromise) {
+                await emojiDataPromise;
+                emojiDataPromise = null;
+            }
+
             const emojisToProcess = matches
                 .map((match) => {
                     const emojiStr = match[0];
@@ -662,13 +678,6 @@ const config = {
 
     const main = async () => {
         try {
-            loadWasm(config.WASM_PLAYER_URL).then((bin) => {
-                patchFetchPlayer(bin);
-                if (config.DEBUG_MODE) console.log('Player wasm patched');
-            });
-
-            await Promise.all([initializeCaches(), initializeEmojiData()]);
-
             if (config.DEBUG_MODE) {
                 console.log(
                     'Script startup time: ' +
@@ -677,7 +686,32 @@ const config = {
                 );
             }
 
-            startObserver();
+            // Defer heavy initialization to avoid blocking page load.
+            setTimeout(() => {
+                loadWasm(config.WASM_PLAYER_URL).then((bin) => {
+                    patchFetchPlayer(bin);
+                    if (config.DEBUG_MODE)
+                        console.log(
+                            'Player wasm patched after ' +
+                                (Date.now() - scriptStartTime) +
+                                'ms'
+                        );
+                });
+
+                lottieCachePromise = initializeCaches();
+                emojiDataPromise = initializeEmojiData();
+
+                // Attach cache-saving listeners only after the cache has been loaded.
+                lottieCachePromise.then(() => {
+                    document.addEventListener(
+                        'visibilitychange',
+                        saveLottieCache
+                    );
+                    document.addEventListener('pagehide', saveLottieCache);
+                });
+
+                startObserver();
+            }, 0);
         } catch (error) {
             if (config.DEBUG_MODE) {
                 console.error(
