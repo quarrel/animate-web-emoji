@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-21_22-26
+// @version      2025-08-21_22-34
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -269,6 +269,7 @@ const config = {
     const allDotLotties = new Set();
 
     const renderCfg = {
+        devicePixelRatio: 1.5, // dottie can't be trusted, at least if you have changes in DPI during the page
         freezeOnOffscreen: true,
         autoResize: false,
     };
