@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-22_03-01
+// @version      2025-08-22_03-08
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -288,11 +288,11 @@ const config = {
                             .then((animationData) => {
                                 const canvas = document.createElement('canvas');
                                 // Set bitmap size
-                                canvas.width = Math.round(span.finalSize); // widths are mostly 90% of height, but feels weird to use it .. ???
+                                canvas.width = Math.round(span.finalSize * 0.9); // widths are mostly 90% of height, but feels weird to use it .. ???
                                 canvas.height = Math.round(span.finalSize);
                                 // Set CSS size
                                 canvas.style.width = `${Math.round(
-                                    span.finalSize
+                                    span.finalSize * 0.9
                                 )}px`;
                                 canvas.style.height = `${Math.round(
                                     span.finalSize
