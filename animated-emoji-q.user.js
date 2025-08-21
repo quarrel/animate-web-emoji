@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-22_01-58
+// @version      2025-08-22_03-01
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -48,7 +48,6 @@ const config = {
 
     let emojiDataPromise = null;
     let pendingLottieRequests = {};
-    let emojiNameMap = {};
     const emojiToCodepoint = new Map();
 
     GM.addStyle(`
@@ -229,7 +228,6 @@ const config = {
             },
             onerror: reject,
             onloadend: () => {
-                delete pendingLottieRequests[codepoint];
                 activeRequests--;
                 processRequestQueue();
             },
@@ -237,6 +235,11 @@ const config = {
     }
 
     const getLottieAnimationData = async (codepoint) => {
+        // if we've got the promise, it is either resolved or we need to wait on it - serves a runtime cache to avoid hitting GM.getValue too
+        if (pendingLottieRequests[codepoint]) {
+            return pendingLottieRequests[codepoint];
+        }
+
         const uniqueCacheKey = `${config.LOTTIE_CACHE_KEY}_${codepoint}`;
 
         const cached = await GM.getValue(uniqueCacheKey, null);
@@ -248,10 +251,6 @@ const config = {
                 //console.log(`Lottie cache hit for ${codepoint}`);
             }
             return cached.data;
-        }
-
-        if (pendingLottieRequests[codepoint]) {
-            return pendingLottieRequests[codepoint];
         }
 
         if (config.DEBUG_MODE) {
@@ -637,7 +636,6 @@ const config = {
                 .map((hex) => String.fromCodePoint(parseInt(hex, 16)))
                 .join('');
             emojiToCodepoint.set(chars, icon.codepoint);
-            emojiNameMap[chars] = icon.name.replace(/_/g, ' ');
         }
         if (config.DEBUG_MODE) {
             console.log(
