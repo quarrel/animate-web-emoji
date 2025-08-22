@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-22_03-08
+// @version      2025-08-22_11-02
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji

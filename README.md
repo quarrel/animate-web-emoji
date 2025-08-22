@@ -15,7 +15,7 @@ This userscript animates emojis on any website using the [Noto Animated Emoji](h
 
 -   **High-Quality Animations**: Replaces standard text emojis with Google's high-resolution [Noto animated versions](https://googlefonts.github.io/noto-emoji-animation/).
 
-    -   As such, you will see a smaller transition from your base emoji font if it is already bsaed on Noto. If you're interested in knowing how to achieve that on Windows 11, see me on another project of mine: [Web Emoji in Win11](https://github.com/quarrel/broken-flag-emojis-win11-twemoji)
+    -   As such, you will see a smaller transition from your base emoji font if it is already based on Noto. If you're interested in knowing how to achieve that on Windows 11, see me on another project of mine: [Web Emoji in Win11](https://github.com/quarrel/broken-flag-emojis-win11-twemoji)
 
 -   **Seamless User Experience**:
 
