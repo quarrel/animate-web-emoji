@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-22_11-02
+// @version      2025-08-24_15-57
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -40,6 +40,21 @@ const config = {
 };
 
 (async () => {
+    try {
+        // A minimal WASM module. (Basically a no-op).
+        const module = new WebAssembly.Module(
+            Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
+        );
+        new WebAssembly.Instance(module);
+    } catch (e) {
+        if (e.message.includes('Content Security Policy')) {
+            console.warn(
+                'Animated Emoji: Script disabled on this page due to Content Security Policy.'
+            );
+            return; // Exit the script early.
+        }
+    }
+
     const scriptStartTime = Date.now();
     const emojiRegex = /\p{RGI_Emoji}/gv;
 
@@ -668,15 +683,21 @@ const config = {
 
             // Defer heavy initialization to avoid blocking page load.
             setTimeout(() => {
-                loadWasm(config.WASM_PLAYER_URL).then((bin) => {
-                    patchFetchPlayer(bin);
-                    if (config.DEBUG_MODE)
-                        console.log(
-                            'Player wasm patched after ' +
-                                (Date.now() - scriptStartTime) +
-                                'ms'
-                        );
-                });
+                loadWasm(config.WASM_PLAYER_URL)
+                    .then((bin) => {
+                        patchFetchPlayer(bin);
+                        if (config.DEBUG_MODE)
+                            console.log(
+                                'Player wasm patched after ' +
+                                    (Date.now() - scriptStartTime) +
+                                    'ms'
+                            );
+                    })
+                    .catch((err) => {
+                        if (config.DEBUG_MODE) {
+                            console.error('Failed to load wasm', err);
+                        }
+                    });
 
                 // Lottie cache initialization is removed.
                 emojiDataPromise = initializeEmojiData();
