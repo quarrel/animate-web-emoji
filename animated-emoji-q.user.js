@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_01-32
+// @version      2025-08-26_01-40
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -30,6 +30,8 @@ const config = {
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json',
     LOTTIE_URL_PATTERN:
         'https://fonts.gstatic.com/s/e/notoemoji/latest/{codepoint}/lottie.json',
+    LOTTIE_BACKUP_PUREJS_PLAYER:
+        'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js',
     UNIQUE_EMOJI_CLASS: 'animated-emoji-q',
     EMOJI_DATA_CACHE_KEY: 'animated-emoji-q-noto-emoji-data-cache',
     LOTTIE_CACHE_KEY: 'animated-emoji-q-lottie',
@@ -54,19 +56,21 @@ const config = {
     const emojiToCodepoint = new Map();
 
     try {
-        // A no-op WASM module
+        // A no-op WASM module - we need to understand if we're allowed to load WAsm modules early.
         const module = new WebAssembly.Module(
             Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
         );
         new WebAssembly.Instance(module);
     } catch (e) {
         if (e.message.includes('Content Security Policy')) {
-            console.warn(
-                '🇦🇺: ',
-                'Script using old pure JS animations on this page due to Content Security Policy.'
-            );
+            if (config.DEBUG_MODE) {
+                console.warn(
+                    '🇦🇺: ',
+                    'Script using old pure JS animations on this page due to Content Security Policy.'
+                );
+            }
             GM.addElement('script', {
-                src: 'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js',
+                src: config.LOTTIE_BACKUP_PUREJS_PLAYER,
                 type: 'text/javascript',
             });
             // To stop myself from accidentally having both paths active
@@ -88,7 +92,6 @@ const config = {
         }
         
         span.${config.UNIQUE_EMOJI_CLASS} > canvas {
-            /* Sizing is now set by JS */
             object-fit: contain;
             image-rendering: crisp-edges;
         }
@@ -127,7 +130,7 @@ const config = {
                 }
                 try {
                     const bytes = base64ToBytes(cached.code);
-                    return resolve(bytes.buffer); // resolve as ArrayBuffer
+                    return resolve(bytes.buffer);
                 } catch (e) {
                     console.warn(
                         '🇦🇺: ',
@@ -137,9 +140,8 @@ const config = {
                 }
             }
 
-            // Cache miss — fetch fresh
             if (config.DEBUG_MODE) {
-                console.log('🇦🇺: ', 'Fetching WASM:', url);
+                console.log('🇦🇺: ', 'Fetching remote WASM:', url);
             }
 
             GM.xmlhttpRequest({
@@ -161,7 +163,6 @@ const config = {
                         });
                     } catch (e) {
                         console.warn('🇦🇺: ', 'Failed to cache WASM:', e);
-                        // Continue anyway
                     }
 
                     resolve(arrayBuffer);
