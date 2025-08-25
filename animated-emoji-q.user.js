@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_01-09
+// @version      2025-08-26_01-32
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -11,11 +11,11 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
 // @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.5.9/lottie.min.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
 // @grant        GM.addStyle
+// @grant        GM.addElement
 // @license      MIT
 // @downloadURL  https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q
 // ==/UserScript==
@@ -65,6 +65,14 @@ const config = {
                 '🇦🇺: ',
                 'Script using old pure JS animations on this page due to Content Security Policy.'
             );
+            GM.addElement('script', {
+                src: 'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js',
+                type: 'text/javascript',
+            });
+            // To stop myself from accidentally having both paths active
+            delete window.DotLottie;
+            delete window.DotLottieWorker;
+
             WA_ALLOWED = false;
         }
     }
