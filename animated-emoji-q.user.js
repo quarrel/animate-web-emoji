@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_02-40
+// @version      2025-08-26_03-21
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -10,11 +10,15 @@
 // @run-at       document-start
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
+// @resource     DOTLOTTIE_PLAYER_URL https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
+// @resource     LOTTIE_BACKUP_PUREJS_PLAYER_URL https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
+// @resource     WASM_PLAYER_URL https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.1/dist/dotlottie-player.wasm
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
 // @grant        GM.addStyle
 // @grant        GM.addElement
+// @grant        GM.getResourceURL
 // @license      MIT
 // @downloadURL  https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q
 // ==/UserScript==
@@ -23,16 +27,10 @@
 
 const config = {
     DEBUG_MODE: false,
-    WASM_PLAYER_URL:
-        'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.1/dist/dotlottie-player.wasm',
     EMOJI_DATA_URL:
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json',
     LOTTIE_URL_PATTERN:
         'https://fonts.gstatic.com/s/e/notoemoji/latest/{codepoint}/lottie.json',
-    DOTLOTTIE_PLAYER_URL:
-        'https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js',
-    LOTTIE_BACKUP_PUREJS_PLAYER_URL:
-        'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js',
     UNIQUE_EMOJI_CLASS: 'animated-emoji-q',
     EMOJI_DATA_CACHE_KEY: 'animated-emoji-q-noto-emoji-data-cache',
     LOTTIE_CACHE_KEY: 'animated-emoji-q-lottie',
@@ -70,20 +68,20 @@ const config = {
                     'Script using old pure JS animations on this page due to Content Security Policy.'
                 );
             }
+            const lottieJs = GM.getResourceURL(
+                'LOTTIE_BACKUP_PUREJS_PLAYER_URL'
+            );
             GM.addElement('script', {
-                src: config.LOTTIE_BACKUP_PUREJS_PLAYER_URL,
+                src: lottieJs,
                 type: 'text/javascript',
             });
-            // To stop myself from accidentally having both paths active
-            delete window.DotLottie;
-            delete window.DotLottieWorker;
-
             WA_ALLOWED = false;
         }
     }
     if (WA_ALLOWED) {
+        const dotLottieJs = GM.getResourceURL('DOTLOTTIE_PLAYER_URL');
         GM.addElement('script', {
-            src: config.DOTLOTTIE_PLAYER_URL,
+            src: dotLottieJs,
             type: 'text/javascript',
         });
     }
@@ -119,68 +117,6 @@ const config = {
         }
         return btoa(binary);
     }
-
-    const loadWasm = (url) => {
-        return new Promise(async (resolve, reject) => {
-            const CACHE_KEY = `wasm_cache_${url}`;
-            const NOW = Date.now();
-
-            const cached = await GM.getValue(CACHE_KEY, null);
-
-            if (
-                cached &&
-                cached.code &&
-                cached.timestamp > NOW - config.WASM_CACHE_TTL
-            ) {
-                if (config.DEBUG_MODE) {
-                    console.log('🇦🇺: ', 'Loading WASM from cache:', url);
-                }
-                try {
-                    const bytes = base64ToBytes(cached.code);
-                    return resolve(bytes.buffer);
-                } catch (e) {
-                    console.warn(
-                        '🇦🇺: ',
-                        'Cache decode failed, re-fetching:',
-                        e
-                    );
-                }
-            }
-
-            if (config.DEBUG_MODE) {
-                console.log('🇦🇺: ', 'Fetching remote WASM:', url);
-            }
-
-            GM.xmlhttpRequest({
-                method: 'GET',
-                url,
-                responseType: 'arraybuffer',
-                onload: async (res) => {
-                    if (res.status !== 200 || !res.response) {
-                        return reject(new Error(`HTTP ${res.status}`));
-                    }
-
-                    const arrayBuffer = res.response;
-
-                    try {
-                        const base64 = arrayBufferToBase64(arrayBuffer);
-                        await GM.setValue(CACHE_KEY, {
-                            code: base64,
-                            timestamp: NOW,
-                        });
-                    } catch (e) {
-                        console.warn('🇦🇺: ', 'Failed to cache WASM:', e);
-                    }
-
-                    resolve(arrayBuffer);
-                },
-                onerror: (err) => {
-                    console.error('🇦🇺: ', 'GM.xmlhttpRequest failed:', err);
-                    reject(err);
-                },
-            });
-        });
-    };
 
     function patchFetchPlayer(bin) {
         const origFetch = window.fetch;
@@ -386,14 +322,44 @@ const config = {
                                 span.appendChild(canvas);
 
                                 if (WA_ALLOWED) {
-                                    player = new DotLottie({
-                                        canvas,
-                                        data: animationData,
-                                        loop: true,
-                                        autoplay: true,
-                                        renderConfig: renderCfg,
-                                        layout: layoutCfg,
-                                    });
+                                    const retryMax = 50;
+                                    const initDotLottie = (
+                                        retries = retryMax
+                                    ) => {
+                                        if (typeof DotLottie !== 'undefined') {
+                                            player = new DotLottie({
+                                                canvas,
+                                                data: animationData,
+                                                loop: true,
+                                                autoplay: true,
+                                                renderConfig: renderCfg,
+                                                layout: layoutCfg,
+                                            });
+                                            span.dotLottiePlayer = player;
+                                            allDotLotties.add(player);
+                                        } else if (retries > 0) {
+                                            if (config.DEBUG_MODE) {
+                                                console.error(
+                                                    '🇦🇺: ',
+                                                    'DotLottie not yet loaded, trying again.'
+                                                );
+                                            }
+                                            setTimeout(
+                                                () =>
+                                                    initDotLottie(retries - 1),
+                                                retryMax - retries
+                                            );
+                                        } else {
+                                            if (config.DEBUG_MODE) {
+                                                console.error(
+                                                    '🇦🇺: ',
+                                                    'DotLottie failed to load in time.'
+                                                );
+                                            }
+                                            sharedIO.unobserve(span);
+                                        }
+                                    };
+                                    initDotLottie();
                                 } else {
                                     player = lottie.loadAnimation({
                                         renderer: 'canvas',
@@ -411,9 +377,9 @@ const config = {
                                             hideOnTransparent: true,
                                         },
                                     });
+                                    span.dotLottiePlayer = player;
+                                    allDotLotties.add(player);
                                 }
-                                span.dotLottiePlayer = player;
-                                allDotLotties.add(player);
                             })
                             .catch((err) => {
                                 if (config.DEBUG_MODE) {
@@ -749,22 +715,15 @@ const config = {
     const main = async () => {
         try {
             if (WA_ALLOWED) {
-                loadWasm(config.WASM_PLAYER_URL)
-                    .then((bin) => {
-                        patchFetchPlayer(bin);
-                        if (config.DEBUG_MODE)
-                            console.log(
-                                '🇦🇺: ',
-                                'Player wasm patched after ' +
-                                    (Date.now() - scriptStartTime) +
-                                    'ms'
-                            );
-                    })
-                    .catch((err) => {
-                        if (config.DEBUG_MODE) {
-                            console.error('🇦🇺: ', 'Failed to load wasm', err);
-                        }
-                    });
+                const wasmPlayer = GM.getResourceURL('WASM_PLAYER_URL');
+                patchFetchPlayer(wasmPlayer);
+                if (config.DEBUG_MODE)
+                    console.log(
+                        '🇦🇺: ',
+                        'Player wasm patched after ' +
+                            (Date.now() - scriptStartTime) +
+                            'ms'
+                    );
             }
 
             emojiDataPromise = initializeEmojiData();
