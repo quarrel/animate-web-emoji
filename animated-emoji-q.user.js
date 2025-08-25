@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_01-40
+// @version      2025-08-26_02-40
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -10,7 +10,6 @@
 // @run-at       document-start
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
-// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
@@ -30,7 +29,9 @@ const config = {
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json',
     LOTTIE_URL_PATTERN:
         'https://fonts.gstatic.com/s/e/notoemoji/latest/{codepoint}/lottie.json',
-    LOTTIE_BACKUP_PUREJS_PLAYER:
+    DOTLOTTIE_PLAYER_URL:
+        'https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js',
+    LOTTIE_BACKUP_PUREJS_PLAYER_URL:
         'https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js',
     UNIQUE_EMOJI_CLASS: 'animated-emoji-q',
     EMOJI_DATA_CACHE_KEY: 'animated-emoji-q-noto-emoji-data-cache',
@@ -70,7 +71,7 @@ const config = {
                 );
             }
             GM.addElement('script', {
-                src: config.LOTTIE_BACKUP_PUREJS_PLAYER,
+                src: config.LOTTIE_BACKUP_PUREJS_PLAYER_URL,
                 type: 'text/javascript',
             });
             // To stop myself from accidentally having both paths active
@@ -79,6 +80,12 @@ const config = {
 
             WA_ALLOWED = false;
         }
+    }
+    if (WA_ALLOWED) {
+        GM.addElement('script', {
+            src: config.DOTLOTTIE_PLAYER_URL,
+            type: 'text/javascript',
+        });
     }
 
     GM.addStyle(`
@@ -741,6 +748,27 @@ const config = {
 
     const main = async () => {
         try {
+            if (WA_ALLOWED) {
+                loadWasm(config.WASM_PLAYER_URL)
+                    .then((bin) => {
+                        patchFetchPlayer(bin);
+                        if (config.DEBUG_MODE)
+                            console.log(
+                                '🇦🇺: ',
+                                'Player wasm patched after ' +
+                                    (Date.now() - scriptStartTime) +
+                                    'ms'
+                            );
+                    })
+                    .catch((err) => {
+                        if (config.DEBUG_MODE) {
+                            console.error('🇦🇺: ', 'Failed to load wasm', err);
+                        }
+                    });
+            }
+
+            emojiDataPromise = initializeEmojiData();
+
             if (config.DEBUG_MODE) {
                 console.log(
                     '🇦🇺: ',
@@ -750,35 +778,7 @@ const config = {
                 );
             }
 
-            // Defer heavy initialization to avoid blocking page load.
-            setTimeout(() => {
-                if (WA_ALLOWED) {
-                    loadWasm(config.WASM_PLAYER_URL)
-                        .then((bin) => {
-                            patchFetchPlayer(bin);
-                            if (config.DEBUG_MODE)
-                                console.log(
-                                    '🇦🇺: ',
-                                    'Player wasm patched after ' +
-                                        (Date.now() - scriptStartTime) +
-                                        'ms'
-                                );
-                        })
-                        .catch((err) => {
-                            if (config.DEBUG_MODE) {
-                                console.error(
-                                    '🇦🇺: ',
-                                    'Failed to load wasm',
-                                    err
-                                );
-                            }
-                        });
-                }
-
-                emojiDataPromise = initializeEmojiData();
-
-                startObserver();
-            }, 0);
+            startObserver();
         } catch (error) {
             if (config.DEBUG_MODE) {
                 console.error(
