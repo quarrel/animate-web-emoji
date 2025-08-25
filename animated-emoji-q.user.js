@@ -1,15 +1,17 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-24_15-59
+// @version      2025-08-26_01-09
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
 // @match        *://*/*
+// @exclude      https://news.ycombinator.com/*
 // @run-at       document-start
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
 // @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.5.9/lottie.min.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
@@ -40,8 +42,19 @@ const config = {
 };
 
 (async () => {
+    const scriptStartTime = Date.now();
+    const emojiRegex = /\p{RGI_Emoji}/gv;
+
+    let WA_ALLOWED = true;
+    let requestQueue = [];
+    let activeRequests = 0;
+
+    let emojiDataPromise = null;
+    let pendingLottieRequests = {};
+    const emojiToCodepoint = new Map();
+
     try {
-        // A minimal WASM module. (Basically a no-op).
+        // A no-op WASM module
         const module = new WebAssembly.Module(
             Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
         );
@@ -49,21 +62,12 @@ const config = {
     } catch (e) {
         if (e.message.includes('Content Security Policy')) {
             console.warn(
-                'Animated Emoji: Script disabled on this page due to Content Security Policy.'
+                '🇦🇺: ',
+                'Script using old pure JS animations on this page due to Content Security Policy.'
             );
-            return; // Exit the script early.
+            WA_ALLOWED = false;
         }
     }
-
-    const scriptStartTime = Date.now();
-    const emojiRegex = /\p{RGI_Emoji}/gv;
-
-    let requestQueue = [];
-    let activeRequests = 0;
-
-    let emojiDataPromise = null;
-    let pendingLottieRequests = {};
-    const emojiToCodepoint = new Map();
 
     GM.addStyle(`
         span.${config.UNIQUE_EMOJI_CLASS} {
@@ -111,19 +115,23 @@ const config = {
                 cached.timestamp > NOW - config.WASM_CACHE_TTL
             ) {
                 if (config.DEBUG_MODE) {
-                    console.log('Loading WASM from cache:', url);
+                    console.log('🇦🇺: ', 'Loading WASM from cache:', url);
                 }
                 try {
                     const bytes = base64ToBytes(cached.code);
                     return resolve(bytes.buffer); // resolve as ArrayBuffer
                 } catch (e) {
-                    console.warn('Cache decode failed, re-fetching:', e);
+                    console.warn(
+                        '🇦🇺: ',
+                        'Cache decode failed, re-fetching:',
+                        e
+                    );
                 }
             }
 
             // Cache miss — fetch fresh
             if (config.DEBUG_MODE) {
-                console.log('Fetching WASM:', url);
+                console.log('🇦🇺: ', 'Fetching WASM:', url);
             }
 
             GM.xmlhttpRequest({
@@ -144,14 +152,14 @@ const config = {
                             timestamp: NOW,
                         });
                     } catch (e) {
-                        console.warn('Failed to cache WASM:', e);
+                        console.warn('🇦🇺: ', 'Failed to cache WASM:', e);
                         // Continue anyway
                     }
 
                     resolve(arrayBuffer);
                 },
                 onerror: (err) => {
-                    console.error('GM.xmlhttpRequest failed:', err);
+                    console.error('🇦🇺: ', 'GM.xmlhttpRequest failed:', err);
                     reject(err);
                 },
             });
@@ -166,6 +174,8 @@ const config = {
                 const url =
                     typeof resource === 'string' ? resource : resource.url;
                 if (url.endsWith('dotlottie-player.wasm')) {
+                    if (config.DEBUG_MODE)
+                        console.log('🇦🇺: ', 'patched fetch being resolved');
                     return Promise.resolve(
                         new Response(bin, {
                             status: 200,
@@ -180,9 +190,8 @@ const config = {
 
     const getEmojiData = () => {
         return new Promise(async (resolve, reject) => {
-            const cachedData = await GM.getValue(
-                config.EMOJI_DATA_CACHE_KEY,
-                null
+            const cachedData = JSON.parse(
+                await GM.getValue(config.EMOJI_DATA_CACHE_KEY, null)
             );
             if (
                 cachedData &&
@@ -201,7 +210,10 @@ const config = {
                             data: response.response,
                             timestamp: Date.now(),
                         };
-                        GM.setValue(config.EMOJI_DATA_CACHE_KEY, dataToCache);
+                        GM.setValue(
+                            config.EMOJI_DATA_CACHE_KEY,
+                            JSON.stringify(dataToCache)
+                        );
                         resolve(response.response);
                     } else {
                         reject('Failed to load emoji data');
@@ -212,7 +224,7 @@ const config = {
         });
     };
 
-    function processRequestQueue() {
+    function processAnimationRequestQueue() {
         if (
             requestQueue.length === 0 ||
             activeRequests >= config.MAX_CONCURRENT_REQUESTS
@@ -235,7 +247,10 @@ const config = {
                         data,
                         timestamp: Date.now(),
                     };
-                    await GM.setValue(uniqueCacheKey, dataToCache);
+                    await GM.setValue(
+                        uniqueCacheKey,
+                        JSON.stringify(dataToCache)
+                    );
                     resolve(data);
                 } else {
                     reject('Failed to load Lottie animation: ' + codepoint);
@@ -244,9 +259,20 @@ const config = {
             onerror: reject,
             onloadend: () => {
                 activeRequests--;
-                processRequestQueue();
+                processAnimationRequestQueue();
             },
         });
+    }
+    function tryParseJSONObject(jsonString) {
+        try {
+            var o = JSON.parse(jsonString);
+
+            if (o && typeof o === 'object') {
+                return o;
+            }
+        } catch (e) {}
+
+        return false;
     }
 
     const getLottieAnimationData = async (codepoint) => {
@@ -257,7 +283,7 @@ const config = {
 
         const uniqueCacheKey = `${config.LOTTIE_CACHE_KEY}_${codepoint}`;
 
-        const cached = await GM.getValue(uniqueCacheKey, null);
+        const cached = JSON.parse(await GM.getValue(uniqueCacheKey, null));
         if (
             cached &&
             cached.timestamp > Date.now() - config.CACHE_EXPIRATION_MS
@@ -265,15 +291,28 @@ const config = {
             if (config.DEBUG_MODE) {
                 //console.log(`Lottie cache hit for ${codepoint}`);
             }
+
+            if (config.DEBUG_MODE) {
+                if (!tryParseJSONObject(JSON.stringify(cached.data))) {
+                    console.log(
+                        'bad json for ' +
+                            codepoint +
+                            ' type = ' +
+                            typeof cached.data +
+                            ' length of json text: ' +
+                            JSON.stringify(cached.data).length
+                    );
+                }
+            }
             return cached.data;
         }
 
         if (config.DEBUG_MODE) {
-            //console.log(`Lottie cache miss for ${codepoint}, fetching...`);
+            console.log(`Lottie cache miss for ${codepoint}, fetching...`);
         }
         const promise = new Promise((resolve, reject) => {
             requestQueue.push({ codepoint, resolve, reject });
-            processRequestQueue();
+            processAnimationRequestQueue();
         });
 
         pendingLottieRequests[codepoint] = promise;
@@ -330,20 +369,40 @@ const config = {
                                 span.textContent = '';
                                 span.appendChild(canvas);
 
-                                player = new DotLottie({
-                                    canvas,
-                                    data: animationData,
-                                    loop: true,
-                                    autoplay: true,
-                                    renderConfig: renderCfg,
-                                    layout: layoutCfg,
-                                });
+                                if (WA_ALLOWED) {
+                                    player = new DotLottie({
+                                        canvas,
+                                        data: animationData,
+                                        loop: true,
+                                        autoplay: true,
+                                        renderConfig: renderCfg,
+                                        layout: layoutCfg,
+                                    });
+                                } else {
+                                    player = lottie.loadAnimation({
+                                        renderer: 'canvas',
+                                        loop: true,
+                                        autoplay: true,
+                                        progressiveLoad: false,
+
+                                        animationData: animationData,
+                                        rendererSettings: {
+                                            context: canvas.getContext('2d'), // Use the 2D context
+                                            //dpr: 1.5, // Match devicePixelRatio - lottie doesn't seem to handle it
+                                            preserveAspectRatio:
+                                                'xMidYMid meet', // Match layout alignment
+                                            clearCanvas: true,
+                                            hideOnTransparent: true,
+                                        },
+                                    });
+                                }
                                 span.dotLottiePlayer = player;
                                 allDotLotties.add(player);
                             })
                             .catch((err) => {
                                 if (config.DEBUG_MODE) {
                                     console.error(
+                                        '🇦🇺: ',
                                         'Failed to load emoji animation, leaving as text.',
                                         err
                                     );
@@ -431,7 +490,6 @@ const config = {
             acceptNode(textNode) {
                 const parent = textNode.parentNode;
                 if (!parent) return NodeFilter.FILTER_REJECT;
-
                 if (SKIP.has(parent.nodeName)) {
                     return NodeFilter.FILTER_REJECT;
                 }
@@ -452,7 +510,6 @@ const config = {
 
         const replacements = [];
 
-        //console.log('Current node: ' + walker.currentNode.nodeValue);
         while (walker.nextNode()) {
             const textNode = walker.currentNode;
             const text = textNode.nodeValue;
@@ -472,7 +529,7 @@ const config = {
                     const codepoint = emojiToCodepoint.get(emojiStr);
                     if (codepoint) {
                         if (config.DEBUG_MODE) {
-                            console.log(emojiStr, codepoint);
+                            console.log('🇦🇺: ', emojiStr, codepoint);
                         }
                     }
                     return codepoint ? { match, codepoint } : null;
@@ -490,7 +547,7 @@ const config = {
             const frag = document.createDocumentFragment();
             let lastIndex = 0;
 
-            emojisToProcess.forEach((emoji, i) => {
+            emojisToProcess.forEach((emoji) => {
                 const { match } = emoji;
 
                 if (match.index > lastIndex) {
@@ -519,6 +576,7 @@ const config = {
             if (!parent) {
                 if (config.DEBUG_MODE) {
                     console.error(
+                        '🇦🇺: ',
                         'No parent node for text node, I do not think this should happen. Node: ' +
                             textNode.nodeValue
                     );
@@ -530,7 +588,7 @@ const config = {
             if (
                 parent.tagName === 'SPAN' &&
                 parent.childNodes.length === 1 &&
-                frag.childElementCount === 1
+                frag.childNodes.length === 1
             ) {
                 const newEmojiEl = frag.firstChild;
 
@@ -654,6 +712,7 @@ const config = {
         }
         if (config.DEBUG_MODE) {
             console.log(
+                '🇦🇺: ',
                 'Emoji cache loaded ' + (Date.now() - scriptStartTime) + 'ms'
             );
         }
@@ -675,6 +734,7 @@ const config = {
         try {
             if (config.DEBUG_MODE) {
                 console.log(
+                    '🇦🇺: ',
                     'Script startup time: ' +
                         (Date.now() - scriptStartTime) +
                         'ms'
@@ -683,23 +743,29 @@ const config = {
 
             // Defer heavy initialization to avoid blocking page load.
             setTimeout(() => {
-                loadWasm(config.WASM_PLAYER_URL)
-                    .then((bin) => {
-                        patchFetchPlayer(bin);
-                        if (config.DEBUG_MODE)
-                            console.log(
-                                'Player wasm patched after ' +
-                                    (Date.now() - scriptStartTime) +
-                                    'ms'
-                            );
-                    })
-                    .catch((err) => {
-                        if (config.DEBUG_MODE) {
-                            console.error('Failed to load wasm', err);
-                        }
-                    });
+                if (WA_ALLOWED) {
+                    loadWasm(config.WASM_PLAYER_URL)
+                        .then((bin) => {
+                            patchFetchPlayer(bin);
+                            if (config.DEBUG_MODE)
+                                console.log(
+                                    '🇦🇺: ',
+                                    'Player wasm patched after ' +
+                                        (Date.now() - scriptStartTime) +
+                                        'ms'
+                                );
+                        })
+                        .catch((err) => {
+                            if (config.DEBUG_MODE) {
+                                console.error(
+                                    '🇦🇺: ',
+                                    'Failed to load wasm',
+                                    err
+                                );
+                            }
+                        });
+                }
 
-                // Lottie cache initialization is removed.
                 emojiDataPromise = initializeEmojiData();
 
                 startObserver();
@@ -707,6 +773,7 @@ const config = {
         } catch (error) {
             if (config.DEBUG_MODE) {
                 console.error(
+                    '🇦🇺: ',
                     'Failed to initialize emoji animation script:',
                     error
                 );
