@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_03-21
+// @version      2025-08-26_12-44
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -11,8 +11,8 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
 // @noframes
 // @resource     DOTLOTTIE_PLAYER_URL https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
-// @resource     LOTTIE_BACKUP_PUREJS_PLAYER_URL https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
 // @resource     WASM_PLAYER_URL https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.1/dist/dotlottie-player.wasm
+// @resource     LOTTIE_BACKUP_PUREJS_PLAYER_URL https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
@@ -26,7 +26,7 @@
 'use strict';
 
 const config = {
-    DEBUG_MODE: false,
+    DEBUG_MODE: true,
     EMOJI_DATA_URL:
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json',
     LOTTIE_URL_PATTERN:
@@ -39,7 +39,6 @@ const config = {
     DEBOUNCE_THRESHOLD: 25,
     MAX_CONCURRENT_REQUESTS: 8,
     SCALE_FACTOR: 1.1,
-    WASM_CACHE_TTL: 24 * 60 * 60 * 1000, // 1 day
 };
 
 (async () => {
@@ -47,6 +46,7 @@ const config = {
     const emojiRegex = /\p{RGI_Emoji}/gv;
 
     let WA_ALLOWED = true;
+    let unUsedWasmURL = null;
     let requestQueue = [];
     let activeRequests = 0;
 
@@ -75,68 +75,18 @@ const config = {
                 src: lottieJs,
                 type: 'text/javascript',
             });
+
             WA_ALLOWED = false;
         }
     }
     if (WA_ALLOWED) {
+        const wasmUrl = GM.getResourceURL('WASM_PLAYER_URL');
+        unUsedWasmURL = wasmUrl;
+
         const dotLottieJs = GM.getResourceURL('DOTLOTTIE_PLAYER_URL');
         GM.addElement('script', {
             src: dotLottieJs,
             type: 'text/javascript',
-        });
-    }
-
-    GM.addStyle(`
-        span.${config.UNIQUE_EMOJI_CLASS} {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            vertical-align: middle;
-            line-height: 1;
-            overflow: hidden;
-        }
-        
-        span.${config.UNIQUE_EMOJI_CLASS} > canvas {
-            object-fit: contain;
-            image-rendering: crisp-edges;
-        }
-    `);
-
-    function base64ToBytes(base64) {
-        const binString = atob(base64);
-        return Uint8Array.from(binString, (char) => char.charCodeAt(0));
-    }
-
-    function arrayBufferToBase64(buffer) {
-        const bytes = new Uint8Array(buffer);
-        const CHUNK_SIZE = 1024;
-        let binary = '';
-        for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
-            const chunk = bytes.subarray(i, i + CHUNK_SIZE);
-            binary += String.fromCharCode.apply(null, chunk);
-        }
-        return btoa(binary);
-    }
-
-    function patchFetchPlayer(bin) {
-        const origFetch = window.fetch;
-        window.fetch = new Proxy(origFetch, {
-            apply(target, thisArg, args) {
-                const resource = args[0];
-                const url =
-                    typeof resource === 'string' ? resource : resource.url;
-                if (url.endsWith('dotlottie-player.wasm')) {
-                    if (config.DEBUG_MODE)
-                        console.log('🇦🇺: ', 'patched fetch being resolved');
-                    return Promise.resolve(
-                        new Response(bin, {
-                            status: 200,
-                            headers: { 'Content-Type': 'application/wasm' },
-                        })
-                    );
-                }
-                return Reflect.apply(target, thisArg, args);
-            },
         });
     }
 
@@ -215,17 +165,6 @@ const config = {
             },
         });
     }
-    function tryParseJSONObject(jsonString) {
-        try {
-            var o = JSON.parse(jsonString);
-
-            if (o && typeof o === 'object') {
-                return o;
-            }
-        } catch (e) {}
-
-        return false;
-    }
 
     const getLottieAnimationData = async (codepoint) => {
         // if we've got the promise, it is either resolved or we need to wait on it - serves a runtime cache to avoid hitting GM.getValue too
@@ -244,18 +183,6 @@ const config = {
                 //console.log(`Lottie cache hit for ${codepoint}`);
             }
 
-            if (config.DEBUG_MODE) {
-                if (!tryParseJSONObject(JSON.stringify(cached.data))) {
-                    console.log(
-                        'bad json for ' +
-                            codepoint +
-                            ' type = ' +
-                            typeof cached.data +
-                            ' length of json text: ' +
-                            JSON.stringify(cached.data).length
-                    );
-                }
-            }
             return cached.data;
         }
 
@@ -283,119 +210,111 @@ const config = {
         align: [0.5, 0.5],
     };
 
-    const sharedIO = new IntersectionObserver(
-        async (entries) => {
-            for (const entry of entries) {
-                const span = entry.target;
-                if (entry.isIntersecting) {
-                    let player = span.dotLottiePlayer;
-                    if (!player) {
-                        getLottieAnimationData(span.dataset.codepoint)
-                            .then((animationData) => {
-                                const canvas = document.createElement('canvas');
-                                // Set bitmap size
-                                canvas.width = Math.round(span.finalSize * 0.9); // widths are mostly 90% of height, but feels weird to use it .. ???
-                                canvas.height = Math.round(span.finalSize);
-                                // Set CSS size
-                                canvas.style.width = `${Math.round(
-                                    span.finalSize * 0.9
-                                )}px`;
-                                canvas.style.height = `${Math.round(
-                                    span.finalSize
-                                )}px`;
+    function initializePlayer(span, animationData) {
+        const canvas = document.createElement('canvas');
+        // Set bitmap size
+        canvas.width = Math.round(span.finalSize * 0.9); // widths are mostly 90% of height, but feels weird to use it .. ???
+        canvas.height = Math.round(span.finalSize);
+        // Set CSS size
+        canvas.style.width = `${Math.round(span.finalSize * 0.9)}px`;
+        canvas.style.height = `${Math.round(span.finalSize)}px`;
 
-                                /*
-                                console.log(
-                                    span.dataset.emoji +
-                                        ': ' +
-                                        'width = ' +
-                                        canvas.width +
-                                        ', height = ' +
-                                        canvas.height +
-                                        ', finalSize = ' +
-                                        span.finalSize
-                                );
-                                */
+        // Clear the text placeholder before adding the canvas
+        span.textContent = '';
+        span.appendChild(canvas);
 
-                                // Clear the text placeholder before adding the canvas
-                                span.textContent = '';
-                                span.appendChild(canvas);
+        let player;
 
-                                if (WA_ALLOWED) {
-                                    const retryMax = 50;
-                                    const initDotLottie = (
-                                        retries = retryMax
-                                    ) => {
-                                        if (typeof DotLottie !== 'undefined') {
-                                            player = new DotLottie({
-                                                canvas,
-                                                data: animationData,
-                                                loop: true,
-                                                autoplay: true,
-                                                renderConfig: renderCfg,
-                                                layout: layoutCfg,
-                                            });
-                                            span.dotLottiePlayer = player;
-                                            allDotLotties.add(player);
-                                        } else if (retries > 0) {
-                                            if (config.DEBUG_MODE) {
-                                                console.error(
-                                                    '🇦🇺: ',
-                                                    'DotLottie not yet loaded, trying again.'
-                                                );
-                                            }
-                                            setTimeout(
-                                                () =>
-                                                    initDotLottie(retries - 1),
-                                                retryMax - retries
-                                            );
-                                        } else {
-                                            if (config.DEBUG_MODE) {
-                                                console.error(
-                                                    '🇦🇺: ',
-                                                    'DotLottie failed to load in time.'
-                                                );
-                                            }
-                                            sharedIO.unobserve(span);
-                                        }
-                                    };
-                                    initDotLottie();
-                                } else {
-                                    player = lottie.loadAnimation({
-                                        renderer: 'canvas',
-                                        loop: true,
-                                        autoplay: true,
-                                        progressiveLoad: false,
+        const retryMax = 100;
+        const initPlayer = (retries = retryMax) => {
+            const libraryLoaded = WA_ALLOWED
+                ? typeof DotLottie !== 'undefined'
+                : typeof lottie !== 'undefined';
+            const libraryName = WA_ALLOWED ? 'DotLottie' : 'lottie';
 
-                                        animationData: animationData,
-                                        rendererSettings: {
-                                            context: canvas.getContext('2d'), // Use the 2D context
-                                            //dpr: 1.5, // Match devicePixelRatio - lottie doesn't seem to handle it
-                                            preserveAspectRatio:
-                                                'xMidYMid meet', // Match layout alignment
-                                            clearCanvas: true,
-                                            hideOnTransparent: true,
-                                        },
-                                    });
-                                    span.dotLottiePlayer = player;
-                                    allDotLotties.add(player);
-                                }
-                            })
-                            .catch((err) => {
-                                if (config.DEBUG_MODE) {
-                                    console.error(
-                                        '🇦🇺: ',
-                                        'Failed to load emoji animation, leaving as text.',
-                                        err
-                                    );
-                                }
-                                sharedIO.unobserve(span);
-                            });
+            if (libraryLoaded) {
+                if (WA_ALLOWED) {
+                    if (unUsedWasmURL) {
+                        DotLottie.setWasmUrl(unUsedWasmURL);
+                        unUsedWasmURL = null;
                     }
-                    if (player) player.play();
+                    player = new DotLottie({
+                        canvas,
+                        data: animationData,
+                        loop: true,
+                        autoplay: true,
+                        renderConfig: renderCfg,
+                        layout: layoutCfg,
+                    });
                 } else {
-                    if (span.dotLottiePlayer) {
-                        span.dotLottiePlayer.pause();
+                    player = lottie.loadAnimation({
+                        renderer: 'canvas',
+                        loop: true,
+                        autoplay: true,
+                        progressiveLoad: false,
+                        animationData: animationData,
+                        rendererSettings: {
+                            context: canvas.getContext('2d'),
+                            preserveAspectRatio: 'xMidYMid meet',
+                            clearCanvas: true,
+                            hideOnTransparent: true,
+                        },
+                    });
+                }
+                span.dotLottiePlayer = player;
+                allDotLotties.add(player);
+            } else if (retries > 0) {
+                if (config.DEBUG_MODE) {
+                    console.info(
+                        '🇦🇺: ',
+                        `${libraryName} not yet loaded, trying again.`
+                    );
+                }
+                setTimeout(() => initPlayer(retries - 1), retryMax - retries); // back off each time we fail
+            } else {
+                if (config.DEBUG_MODE) {
+                    console.error(
+                        '🇦🇺: ',
+                        `${libraryName} failed to load in time.`
+                    );
+                }
+                sharedIO.unobserve(span);
+            }
+        };
+        initPlayer();
+    }
+
+    async function loadAnimationForSpan(span) {
+        if (span.dotLottiePlayer) {
+            span.dotLottiePlayer.play();
+            return;
+        }
+
+        try {
+            const animationData = await getLottieAnimationData(
+                span.dataset.codepoint
+            );
+            initializePlayer(span, animationData);
+        } catch (err) {
+            if (config.DEBUG_MODE) {
+                console.error(
+                    '🇦🇺: ',
+                    'Failed to load emoji animation, leaving as text.',
+                    err
+                );
+            }
+            sharedIO.unobserve(span);
+        }
+    }
+
+    const sharedIO = new IntersectionObserver(
+        (entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting) {
+                    loadAnimationForSpan(entry.target);
+                } else {
+                    if (entry.target.dotLottiePlayer) {
+                        entry.target.dotLottiePlayer.pause();
                     }
                 }
             }
@@ -411,12 +330,6 @@ const config = {
             allDotLotties.forEach((p) => p.play());
         }
     });
-    // Shouldn't be needed?
-    /*
-        document.addEventListener('pagehide', () => {
-            allDotLotties.forEach((p) => p.pause());
-        });
-    */
 
     function createLazyEmojiSpan(emoji, referenceNode) {
         const span = document.createElement('span');
@@ -453,6 +366,51 @@ const config = {
         sharedIO.observe(span);
 
         return span;
+    }
+
+    async function processMatches(textNode, matches) {
+        await emojiDataPromise;
+
+        const emojisToProcess = matches
+            .map((match) => {
+                const emojiStr = match[0];
+                const codepoint = emojiToCodepoint.get(emojiStr);
+                if (codepoint && config.DEBUG_MODE) {
+                    console.log('🇦🇺: ', emojiStr, codepoint);
+                }
+                return codepoint ? { match, codepoint } : null;
+            })
+            .filter(Boolean);
+
+        if (emojisToProcess.length === 0) return null;
+
+        // Pre-fetch animations
+        emojisToProcess.forEach((emoji) =>
+            getLottieAnimationData(emoji.codepoint).catch(() => {})
+        );
+
+        const frag = document.createDocumentFragment();
+        let lastIndex = 0;
+
+        emojisToProcess.forEach(({ match }) => {
+            if (match.index > lastIndex) {
+                frag.appendChild(
+                    document.createTextNode(
+                        textNode.nodeValue.slice(lastIndex, match.index)
+                    )
+                );
+            }
+            frag.appendChild(createLazyEmojiSpan(match[0], textNode));
+            lastIndex = match.index + match[0].length;
+        });
+
+        if (lastIndex < textNode.nodeValue.length) {
+            frag.appendChild(
+                document.createTextNode(textNode.nodeValue.slice(lastIndex))
+            );
+        }
+
+        return frag;
     }
 
     async function replaceEmojiInTextNode(node) {
@@ -498,59 +456,12 @@ const config = {
             if (!text) continue;
 
             const matches = [...text.matchAll(emojiRegex)];
+            if (matches.length === 0) continue;
 
-            // we know we have emojis, now we need to make sure we have enough data loaded to create the span
-            if (emojiDataPromise) {
-                await emojiDataPromise;
-                emojiDataPromise = null;
+            const frag = await processMatches(textNode, matches);
+            if (frag) {
+                replacements.push({ textNode, frag });
             }
-
-            const emojisToProcess = matches
-                .map((match) => {
-                    const emojiStr = match[0];
-                    const codepoint = emojiToCodepoint.get(emojiStr);
-                    if (codepoint) {
-                        if (config.DEBUG_MODE) {
-                            console.log('🇦🇺: ', emojiStr, codepoint);
-                        }
-                    }
-                    return codepoint ? { match, codepoint } : null;
-                })
-                .filter(Boolean);
-
-            if (emojisToProcess.length === 0) continue;
-            // do we want to try and set to pre-fetching all the emoji? can cut this to do it only on demand as they appear in the visibility observer
-            const promises = emojisToProcess.map((emoji) =>
-                getLottieAnimationData(emoji.codepoint).catch(() => {
-                    // This is for pre-fetching, errors will be handled by the IntersectionObserver
-                })
-            );
-
-            const frag = document.createDocumentFragment();
-            let lastIndex = 0;
-
-            emojisToProcess.forEach((emoji) => {
-                const { match } = emoji;
-
-                if (match.index > lastIndex) {
-                    frag.appendChild(
-                        document.createTextNode(
-                            text.slice(lastIndex, match.index)
-                        )
-                    );
-                }
-
-                frag.appendChild(createLazyEmojiSpan(match[0], textNode));
-                lastIndex = match.index + match[0].length;
-            });
-
-            if (lastIndex < text.length) {
-                frag.appendChild(
-                    document.createTextNode(text.slice(lastIndex))
-                );
-            }
-
-            replacements.push({ textNode, frag });
         }
 
         for (const { textNode, frag } of replacements) {
@@ -712,21 +623,28 @@ const config = {
         }
     };
 
-    const main = async () => {
+    const main = () => {
         try {
-            if (WA_ALLOWED) {
-                const wasmPlayer = GM.getResourceURL('WASM_PLAYER_URL');
-                patchFetchPlayer(wasmPlayer);
-                if (config.DEBUG_MODE)
-                    console.log(
-                        '🇦🇺: ',
-                        'Player wasm patched after ' +
-                            (Date.now() - scriptStartTime) +
-                            'ms'
-                    );
-            }
-
             emojiDataPromise = initializeEmojiData();
+
+            startObserver();
+
+            // defer adding these until we've got a bunch of other processing done
+            GM.addStyle(`
+                span.${config.UNIQUE_EMOJI_CLASS} {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    vertical-align: middle;
+                    line-height: 1;
+                    overflow: hidden;
+                }
+                
+                span.${config.UNIQUE_EMOJI_CLASS} > canvas {
+                    object-fit: contain;
+                    image-rendering: crisp-edges;
+                }
+            `);
 
             if (config.DEBUG_MODE) {
                 console.log(
@@ -736,8 +654,6 @@ const config = {
                         'ms'
                 );
             }
-
-            startObserver();
         } catch (error) {
             if (config.DEBUG_MODE) {
                 console.error(
