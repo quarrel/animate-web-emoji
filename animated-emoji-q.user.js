@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_12-44
+// @version      2025-08-26_12-45
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -26,7 +26,7 @@
 'use strict';
 
 const config = {
-    DEBUG_MODE: true,
+    DEBUG_MODE: false,
     EMOJI_DATA_URL:
         'https://googlefonts.github.io/noto-emoji-animation/data/api.json',
     LOTTIE_URL_PATTERN:
