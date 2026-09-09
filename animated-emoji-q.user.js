@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2026-09-09_16-40
+// @version      2026-09-09_18-49
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -13,8 +13,8 @@
 // @connect      googlefonts.github.io
 // @connect      fonts.gstatic.com
 // @noframes
-// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
-// @resource     WASM_PLAYER_URL https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.1/dist/dotlottie-player.wasm
+// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@e44a2a4c6d714438d5791005806dd8a735548b34/build/dotlottie-web-iife.js
+// @resource     WASM_PLAYER_URL https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.80.0/dist/dotlottie-player.wasm
 // @require      https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
