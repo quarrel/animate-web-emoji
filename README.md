@@ -11,6 +11,20 @@ This userscript animates emojis on any website using the [Noto Animated Emoji](h
     -   [Tampermonkey](https://www.tampermonkey.net/)
 2.  [Visit this script on Greasyfork to install safely](https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q).
 
+### Updating the local fix in Chrome
+
+1. Open `chrome://extensions`, select **Violentmonkey → Details**, and ensure **Allow User Scripts** is enabled. Chrome 138 and newer use this per-extension permission ([Chrome documentation](https://developer.chrome.com/blog/chrome-userscript)). Also check that Violentmonkey is enabled and has site access for the page you are testing.
+2. In the Violentmonkey dashboard, edit the existing script and replace its entire contents with `animated-emoji-q.user.js`, including the metadata header. Save and let its dependencies finish downloading.
+3. Reload a normal web page containing supported emoji such as 😀 or 🎉. Chrome's internal pages cannot run this script, and Hacker News is explicitly excluded.
+
+The September 2026 fix loads both player libraries with `@require` in the userscript context, replacing page-level `GM.addElement('script', ...)` injection. This avoids depending on page script injection under CSP/Trusted Types and keeps the libraries accessible in content mode. The WASM resource URL is awaited, and a WASM loading failure falls back to the JavaScript renderer. Original emoji remain visible until an animation successfully loads.
+
+### Validation
+
+Run `node --check animated-emoji-q.user.js` and `node --test tests/player-loading.test.cjs` (Node 22 or newer). The tests use mocked browser and userscript APIs to cover player loading, WASM fallback, preserving text on failure, duplicate loading, and removal/visibility during loading. They do not establish compatibility with an installed extension.
+
+For a browser smoke test, check a normal page and a page with a strict CSP, confirm emoji animate, then scroll them out of view and back. If they remain static, enable `DEBUG_MODE` and inspect the browser console for `Animated emoji` messages. These local changes must be installed in Violentmonkey before they affect browsing; the Greasyfork copy is separate.
+
 ## Key Features
 
 -   **High-Quality Animations**: Replaces standard text emojis with Google's high-resolution [Noto animated versions](https://googlefonts.github.io/noto-emoji-animation/).

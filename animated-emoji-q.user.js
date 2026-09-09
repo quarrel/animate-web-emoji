@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Animate Emoji on the web --Q
 // @namespace    Violentmonkey Scripts
-// @version      2025-08-26_12-45
+// @version      2026-09-09_16-40
 // @description  Animate emoji on the web using the noto animated emoji from Google.
 // @author       Quarrel
 // @homepage     https://github.com/quarrel/animate-web-emoji
@@ -9,15 +9,17 @@
 // @exclude      https://news.ycombinator.com/*
 // @run-at       document-start
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=emojicopy.com
+// @inject-into  content
+// @connect      googlefonts.github.io
+// @connect      fonts.gstatic.com
 // @noframes
-// @resource     DOTLOTTIE_PLAYER_URL https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
+// @require      https://cdn.jsdelivr.net/gh/quarrel/dotlottie-web-standalone@2133618935be739f13dd3b5b8d9a35d9ea47f407/build/dotlottie-web-iife.js
 // @resource     WASM_PLAYER_URL https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.50.1/dist/dotlottie-player.wasm
-// @resource     LOTTIE_BACKUP_PUREJS_PLAYER_URL https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
+// @require      https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.13.0/lottie_canvas.min.js
 // @grant        GM.xmlhttpRequest
 // @grant        GM.setValue
 // @grant        GM.getValue
 // @grant        GM.addStyle
-// @grant        GM.addElement
 // @grant        GM.getResourceURL
 // @license      MIT
 // @downloadURL  https://greasyfork.org/en/scripts/546062-animate-emoji-on-the-web-q
@@ -46,7 +48,6 @@ const config = {
     const emojiRegex = /\p{RGI_Emoji}/gv;
 
     let WA_ALLOWED = true;
-    let unUsedWasmURL = null;
     let requestQueue = [];
     let activeRequests = 0;
 
@@ -54,40 +55,21 @@ const config = {
     let pendingLottieRequests = {};
     const emojiToCodepoint = new Map();
 
+    // @require loads both players in this userscript's context, without page
+    // script elements (which can be blocked by CSP/Trusted Types under MV3).
+    const DotLottiePlayer = window.DotLottie;
     try {
-        // A no-op WASM module - we need to understand if we're allowed to load WAsm modules early.
         const module = new WebAssembly.Module(
             Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
         );
         new WebAssembly.Instance(module);
-    } catch (e) {
-        if (e.message.includes('Content Security Policy')) {
-            if (config.DEBUG_MODE) {
-                console.warn(
-                    '🇦🇺: ',
-                    'Script using old pure JS animations on this page due to Content Security Policy.'
-                );
-            }
-            const lottieJs = GM.getResourceURL(
-                'LOTTIE_BACKUP_PUREJS_PLAYER_URL'
-            );
-            GM.addElement('script', {
-                src: lottieJs,
-                type: 'text/javascript',
-            });
-
-            WA_ALLOWED = false;
+        // GM.* resource APIs can return promises in other userscript managers.
+        DotLottiePlayer.setWasmUrl(await GM.getResourceURL('WASM_PLAYER_URL'));
+    } catch (error) {
+        WA_ALLOWED = false;
+        if (config.DEBUG_MODE) {
+            console.info('Animated emoji: using the JavaScript player.', error);
         }
-    }
-    if (WA_ALLOWED) {
-        const wasmUrl = GM.getResourceURL('WASM_PLAYER_URL');
-        unUsedWasmURL = wasmUrl;
-
-        const dotLottieJs = GM.getResourceURL('DOTLOTTIE_PLAYER_URL');
-        GM.addElement('script', {
-            src: dotLottieJs,
-            type: 'text/javascript',
-        });
     }
 
     const getEmojiData = () => {
@@ -210,91 +192,102 @@ const config = {
         align: [0.5, 0.5],
     };
 
-    function initializePlayer(span, animationData) {
+    async function initializePlayer(span, animationData) {
         const canvas = document.createElement('canvas');
-        // Set bitmap size
         canvas.width = Math.round(span.finalSize * 0.9); // widths are mostly 90% of height, but feels weird to use it .. ???
         canvas.height = Math.round(span.finalSize);
-        // Set CSS size
-        canvas.style.width = `${Math.round(span.finalSize * 0.9)}px`;
-        canvas.style.height = `${Math.round(span.finalSize)}px`;
+        canvas.style.width = canvas.width + 'px';
+        canvas.style.height = canvas.height + 'px';
 
-        // Clear the text placeholder before adding the canvas
-        span.textContent = '';
-        span.appendChild(canvas);
-
+        // Keep the original text until a player has actually loaded.
         let player;
-
-        const retryMax = 100;
-        const initPlayer = (retries = retryMax) => {
-            const libraryLoaded = WA_ALLOWED
-                ? typeof DotLottie !== 'undefined'
-                : typeof lottie !== 'undefined';
-            const libraryName = WA_ALLOWED ? 'DotLottie' : 'lottie';
-
-            if (libraryLoaded) {
-                if (WA_ALLOWED) {
-                    if (unUsedWasmURL) {
-                        DotLottie.setWasmUrl(unUsedWasmURL);
-                        unUsedWasmURL = null;
-                    }
-                    player = new DotLottie({
-                        canvas,
-                        data: animationData,
-                        loop: true,
-                        autoplay: true,
-                        renderConfig: renderCfg,
-                        layout: layoutCfg,
-                    });
-                } else {
-                    player = lottie.loadAnimation({
-                        renderer: 'canvas',
-                        loop: true,
-                        autoplay: true,
-                        progressiveLoad: false,
-                        animationData: animationData,
-                        rendererSettings: {
-                            context: canvas.getContext('2d'),
-                            preserveAspectRatio: 'xMidYMid meet',
-                            clearCanvas: true,
-                            hideOnTransparent: true,
-                        },
-                    });
+        async function loadPlayer(useWasm) {
+            await new Promise((resolve, reject) => {
+                const readyEvent = useWasm ? 'load' : 'DOMLoaded';
+                const errorEvent = useWasm ? 'loadError' : 'data_failed';
+                const timeout = setTimeout(
+                    () => finish(new Error('Player load timed out')),
+                    15000
+                );
+                const onReady = () => finish();
+                const onError = (event) =>
+                    finish(event?.error || new Error('Player failed to load'));
+                function finish(error) {
+                    clearTimeout(timeout);
+                    player?.removeEventListener(readyEvent, onReady);
+                    player?.removeEventListener(errorEvent, onError);
+                    if (error) reject(error);
+                    else resolve();
                 }
-                span.dotLottiePlayer = player;
-                allDotLotties.add(player);
-            } else if (retries > 0) {
-                if (config.DEBUG_MODE) {
-                    console.info(
-                        '🇦🇺: ',
-                        `${libraryName} not yet loaded, trying again.`
-                    );
+                try {
+                    player = useWasm
+                        ? new DotLottiePlayer({
+                              canvas,
+                              data: animationData,
+                              loop: true,
+                              autoplay: false,
+                              renderConfig: renderCfg,
+                              layout: layoutCfg,
+                          })
+                        : lottie.loadAnimation({
+                              renderer: 'canvas',
+                              loop: true,
+                              autoplay: false,
+                              progressiveLoad: false,
+                              // lottie-web mutates its input; preserve the cache.
+                              animationData: JSON.parse(JSON.stringify(animationData)),
+                              rendererSettings: {
+                                  context: canvas.getContext('2d'),
+                                  preserveAspectRatio: 'xMidYMid meet',
+                                  clearCanvas: true,
+                                  hideOnTransparent: true,
+                              },
+                          });
+                    player.addEventListener(readyEvent, onReady);
+                    player.addEventListener(errorEvent, onError);
+                    if (player.isLoaded) finish();
+                } catch (error) {
+                    finish(error);
                 }
-                setTimeout(() => initPlayer(retries - 1), retryMax - retries); // back off each time we fail
+            });
+        }
+        try {
+            if (WA_ALLOWED) {
+                try {
+                    await loadPlayer(true);
+                } catch (error) {
+                    player?.destroy();
+                    player = null;
+                    WA_ALLOWED = false;
+                    await loadPlayer(false);
+                }
             } else {
-                if (config.DEBUG_MODE) {
-                    console.error(
-                        '🇦🇺: ',
-                        `${libraryName} failed to load in time.`
-                    );
-                }
-                sharedIO.unobserve(span);
+                await loadPlayer(false);
             }
-        };
-        initPlayer();
+            if (!span.isConnected) {
+                player.destroy();
+                return;
+            }
+            span.replaceChildren(canvas);
+            span.dotLottiePlayer = player;
+            allDotLotties.add(player);
+            if (!document.hidden && span.animationVisible) player.play();
+        } catch (error) {
+            player?.destroy();
+            throw error;
+        }
     }
 
     async function loadAnimationForSpan(span) {
         if (span.dotLottiePlayer) {
-            span.dotLottiePlayer.play();
+            if (!document.hidden) span.dotLottiePlayer.play();
             return;
         }
-
+        if (span.animationLoading) return;
+        span.animationLoading = true;
         try {
-            const animationData = await getLottieAnimationData(
-                span.dataset.codepoint
-            );
-            initializePlayer(span, animationData);
+            const animationData = await getLottieAnimationData(span.dataset.codepoint);
+            await initializePlayer(span, animationData);
         } catch (err) {
             if (config.DEBUG_MODE) {
                 console.error(
@@ -304,12 +297,15 @@ const config = {
                 );
             }
             sharedIO.unobserve(span);
+        } finally {
+            span.animationLoading = false;
         }
     }
 
     const sharedIO = new IntersectionObserver(
         (entries) => {
             for (const entry of entries) {
+                entry.target.animationVisible = entry.isIntersecting;
                 if (entry.isIntersecting) {
                     loadAnimationForSpan(entry.target);
                 } else {
